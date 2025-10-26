@@ -1,0 +1,32 @@
+{
+    // ============================================================
+    // 💻 VS Code Launch Configuration – PowerShell (Allgemein)
+    // Version: VS_V1.0.1
+    // Zweck:   Führt jedes geöffnete PowerShell-Skript (.ps1) im Projekt aus
+    // Autor:   Herbert Schrotter
+    // Datum:   24.10.2025
+    // ============================================================
+
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "▶ Starte aktuelles PowerShell-Skript",
+            "type": "PowerShell",
+            "request": "launch",
+            "script": "${file}",
+            "cwd": "${fileDirname}",
+            "stopOnEntry": false,
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "🧩 Debug aktuelles PowerShell-Skript",
+            "type": "PowerShell",
+            "request": "launch",
+            "script": "${file}",
+            "cwd": "${fileDirname}",
+            "stopOnEntry": true,
+            "console": "integratedTerminal"
+        }
+    ]
+}
+
