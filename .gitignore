@@ -1,0 +1,12 @@
+
+#### 🧾 `.gitignore`
+```gitignore
+# Logs & temporäre Dateien
+BatchRename_Log.json
+*.tmp
+*.bak
+*.log
+
+# VS Code
+.vscode/
+
