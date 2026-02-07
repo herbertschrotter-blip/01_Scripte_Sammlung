@@ -1,9 +1,9 @@
 <#
 ManifestHint:
   ExportFunctions = @()
-  Description     = "Erstellt im Root den Ordner '00_VidPreview' und erzeugt je Video 3 Previews bei 50%, 70% und 90% der Laufzeit."
+  Description     = "Erstellt im Root den Ordner '00_VidPreview' und erzeugt je Video 6 Previews bei 50%, 60%, 70%, 80%, 90% und 95% der Laufzeit. Ordner wird nur erstellt, wenn Videos gefunden wurden."
   Category        = "Media"
-  Tags            = @("Videos","Preview","Thumbnail","FFmpeg","Percent","50","70","90","Recursive")
+  Tags            = @("Videos","Preview","Thumbnail","FFmpeg","Percent","50","60","70","80","90","95","Recursive")
   Dependencies    = @("ffmpeg.exe")
 
 Fehlercodes:
@@ -66,10 +66,77 @@ if (-not $ffmpeg) {
 Write-Host "[INFO] ffmpeg: $ffmpeg"
 
 # ------------------------------------------------------------
-# Preview-Ordner vorbereiten
+# Hilfsfunktionen
+# ------------------------------------------------------------
+function Get-VideoDurationSeconds {
+    param([string]$VideoPath)
+
+    # ffmpeg schreibt Infos nach stderr -> alles einsammeln
+    $out = & $ffmpeg -hide_banner -i $VideoPath 2>&1
+
+    # Beispiel: Duration: 00:01:23.45,
+    $m = [regex]::Match($out, 'Duration:\s*(\d{2}):(\d{2}):(\d{2})\.(\d+)')
+    if (-not $m.Success) { return $null }
+
+    $hh = [int]$m.Groups[1].Value
+    $mm = [int]$m.Groups[2].Value
+    $ss = [int]$m.Groups[3].Value
+
+    $fracRaw = $m.Groups[4].Value
+    $ms = 0
+    if ($fracRaw.Length -ge 3) { $ms = [int]$fracRaw.Substring(0,3) }
+    elseif ($fracRaw.Length -eq 2) { $ms = [int]($fracRaw + "0") }
+    elseif ($fracRaw.Length -eq 1) { $ms = [int]($fracRaw + "00") }
+
+    return ($hh * 3600) + ($mm * 60) + $ss + ($ms / 1000.0)
+}
+
+function Format-Timestamp {
+    param([double]$Seconds)
+
+    if ($Seconds -lt 0) { $Seconds = 0 }
+    $ts = [TimeSpan]::FromSeconds($Seconds)
+
+    # ffmpeg akzeptiert HH:MM:SS.mmm
+    "{0:00}:{1:00}:{2:00}.{3:000}" -f $ts.Hours, $ts.Minutes, $ts.Seconds, $ts.Milliseconds
+}
+
+function SafeName {
+    param([string]$Text)
+
+    $invalid = [IO.Path]::GetInvalidFileNameChars()
+    foreach ($ch in $invalid) {
+        $Text = $Text.Replace($ch, '_')
+    }
+    return $Text
+}
+
+# ------------------------------------------------------------
+# Videos finden (rekursiv) – Preview-Ordner wird später ggf. erstellt
 # ------------------------------------------------------------
 $previewFolder = Join-Path $root "00_VidPreview"
+$videoExt = @(".mp4",".mov",".mkv",".avi",".wmv",".m4v",".webm")
 
+$videos = Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
+    Where-Object {
+        $_.Extension -and
+        ($videoExt -contains $_.Extension.ToLowerInvariant()) -and
+        # objektbasiert, kein -like/-notlike -> sicher bei [] im Pfad
+        ($_.Directory.FullName -ne $previewFolder)
+    } |
+    Sort-Object FullName
+
+Write-Host "Gefundene Videos: $($videos.Count)"
+
+# Ordner nur anlegen, wenn tatsächlich Videos existieren
+if (-not $videos -or $videos.Count -eq 0) {
+    Write-Host "Keine Videos gefunden – kein Video-Preview-Ordner erstellt."
+    return
+}
+
+# ------------------------------------------------------------
+# Preview-Ordner jetzt erst vorbereiten
+# ------------------------------------------------------------
 if (Test-Path -LiteralPath $previewFolder) {
     Write-Host "Video-Preview-Ordner existiert – wird geleert."
     Get-ChildItem -LiteralPath $previewFolder -File -ErrorAction SilentlyContinue |
@@ -81,50 +148,7 @@ else {
 }
 
 # ------------------------------------------------------------
-# Hilfsfunktionen
-# ------------------------------------------------------------
-function Get-VideoDurationSeconds {
-    param([string]$VideoPath)
-
-    $out = & $ffmpeg -hide_banner -i $VideoPath 2>&1
-    $m = [regex]::Match($out, 'Duration:\s*(\d{2}):(\d{2}):(\d{2})\.(\d+)')
-    if (-not $m.Success) { return $null }
-
-    $h = [int]$m.Groups[1].Value
-    $m2 = [int]$m.Groups[2].Value
-    $s = [int]$m.Groups[3].Value
-    return ($h * 3600) + ($m2 * 60) + $s
-}
-
-function Format-Timestamp {
-    param([double]$Seconds)
-    $ts = [TimeSpan]::FromSeconds($Seconds)
-    "{0:00}:{1:00}:{2:00}.{3:000}" -f $ts.Hours, $ts.Minutes, $ts.Seconds, $ts.Milliseconds
-}
-
-function SafeName([string]$s) {
-    foreach ($c in [IO.Path]::GetInvalidFileNameChars()) {
-        $s = $s.Replace($c, '_')
-    }
-    return $s
-}
-
-# ------------------------------------------------------------
-# Videos finden
-# ------------------------------------------------------------
-$videoExt = @(".mp4",".mov",".mkv",".avi",".wmv",".m4v",".webm")
-
-$videos = Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
-    Where-Object {
-        $_.Extension -and
-        ($videoExt -contains $_.Extension.ToLowerInvariant()) -and
-        ($_.Directory.FullName -ne $previewFolder)
-    }
-
-Write-Host "Gefundene Videos: $($videos.Count)"
-
-# ------------------------------------------------------------
-# Previews erzeugen (50 / 70 / 90 %)
+# Previews erzeugen (50 / 60 / 70 / 80 / 90 / 95 %)
 # ------------------------------------------------------------
 $ok = 0
 $fail = 0
@@ -134,7 +158,7 @@ foreach ($v in $videos) {
     Write-Host "`n[VIDEO] $($v.FullName)"
 
     $dur = Get-VideoDurationSeconds $v.FullName
-    if (-not $dur -or $dur -le 1) {
+    if (-not $dur -or $dur -le 0.5) {
         Write-Host "E040 Dauer nicht ermittelbar"
         $fail++
         continue
@@ -142,16 +166,16 @@ foreach ($v in $videos) {
 
     $rel = $v.DirectoryName.Substring($root.Length).Trim('\')
     if (-not $rel) { $rel = "ROOT" }
-    $rel = SafeName ($rel -replace '\\','_')
+    $relSafe = SafeName ($rel -replace '\\','_')
 
     $base = SafeName ([IO.Path]::GetFileNameWithoutExtension($v.Name))
 
     foreach ($p in @(50,60,70,80,90,95)) {
 
-        $sec = $dur * ($p / 100)
+        $sec = [double]$dur * ([double]$p / 100.0)
         $ts = Format-Timestamp $sec
 
-        $outFile = "{0}__{1}__P{2}.jpg" -f $rel, $base, $p
+        $outFile = "{0}__{1}__P{2}.jpg" -f $relSafe, $base, $p
         $outPath = Join-Path $previewFolder $outFile
 
         $args = @(
@@ -163,8 +187,9 @@ foreach ($v in $videos) {
             $outPath
         )
 
-        # ffmpeg direkt ausführen: korrektes Handling von Leerzeichen in Pfaden
+        # Direktaufruf: korrekt bei Leerzeichen in Pfaden
         $null = & $ffmpeg @args 2>&1
+
         if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $outPath)) {
             $ok++
         }
