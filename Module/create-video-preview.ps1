@@ -182,6 +182,7 @@ foreach ($v in $videos) {
             "-hide_banner","-loglevel","error",
             "-ss",$ts,
             "-i",$v.FullName,
+            "-vf","scale=1280:720:force_original_aspect_ratio=decrease",
             "-frames:v","1",
             "-q:v","2",
             $outPath
