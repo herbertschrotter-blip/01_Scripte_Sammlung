@@ -12,6 +12,7 @@ do {
     Write-Host "2) Cleanup + Foto- & Video-Previews (Gesamtlauf)"
     Write-Host "3) Archive entpacken & bereinigen (Extract-And-CleanupArchives)"
     Write-Host "4) Video-Previews erstellen (create-video-preview)"
+    Write-Host "5) Fotos aus mehreren Ordnern verschieben (move-photos-multifolder)"
     Write-Host "0) Beenden"
     Write-Host ""
 
@@ -73,6 +74,12 @@ do {
         "4" {
             Clear-Host
             . "$PSScriptRoot\Module\create-video-preview.ps1"
+            Read-Host "`nEnter für Rückkehr ins Menü"
+        }
+
+        "5" {
+            Clear-Host
+            . "$PSScriptRoot\Module\move-photos-multifolder.ps1"
             Read-Host "`nEnter für Rückkehr ins Menü"
         }
 
