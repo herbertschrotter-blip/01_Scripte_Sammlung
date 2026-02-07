@@ -31,19 +31,9 @@ else {
 Write-Host "`nRoot-Ordner:`n$root"
 
 # ------------------------------------------------------------
-# Preview-Ordner vorbereiten (LiteralPath wegen [PHOTOS])
+# Preview-Ordner Pfad (wird erst erstellt, wenn Bilder gefunden wurden)
 # ------------------------------------------------------------
 $previewFolder = Join-Path $root "00_Preview"
-
-if (Test-Path -LiteralPath $previewFolder) {
-    Write-Host "Preview-Ordner existiert – wird geleert."
-    Get-ChildItem -LiteralPath $previewFolder -File -ErrorAction SilentlyContinue |
-        Remove-Item -Force -ErrorAction SilentlyContinue
-}
-else {
-    New-Item -ItemType Directory -Path $previewFolder -Force | Out-Null
-    Write-Host "Preview-Ordner erstellt: 00_Preview"
-}
 
 # ------------------------------------------------------------
 # Unterordner durchsuchen: pro Hauptordner nur tiefste Ebene mit Bildern
@@ -56,6 +46,7 @@ Write-Host "Gefundene Hauptordner: $($topDirs.Count)"
 $copiedFiles = @()
 $hitDirs = 0
 $copyErrors = 0
+$previewPrepared = $false
 
 foreach ($top in $topDirs) {
 
@@ -86,6 +77,20 @@ foreach ($top in $topDirs) {
 
     if (-not $candidates -or $candidates.Count -eq 0) {
         continue
+    }
+
+    # Preview-Ordner erst jetzt vorbereiten (weil wir erstmals Bilder haben)
+    if (-not $previewPrepared) {
+        if (Test-Path -LiteralPath $previewFolder) {
+            Write-Host "Preview-Ordner existiert – wird geleert."
+            Get-ChildItem -LiteralPath $previewFolder -File -ErrorAction SilentlyContinue |
+                Remove-Item -Force -ErrorAction SilentlyContinue
+        }
+        else {
+            New-Item -ItemType Directory -Path $previewFolder -Force | Out-Null
+            Write-Host "Preview-Ordner erstellt: 00_Preview"
+        }
+        $previewPrepared = $true
     }
 
     # Tiefste Ebene (max Depth)
@@ -127,13 +132,16 @@ foreach ($top in $topDirs) {
 }
 
 # ------------------------------------------------------------
-# Reale Kontrolle: Was liegt wirklich im Preview-Ordner?
+# Reale Kontrolle + Zusammenfassung
 # ------------------------------------------------------------
+if (-not $previewPrepared) {
+    Write-Host "`nFertig."
+    Write-Host "Keine Bilder gefunden – kein Preview-Ordner erstellt."
+    return
+}
+
 $actualPreviewFiles = Get-ChildItem -LiteralPath $previewFolder -File -ErrorAction SilentlyContinue
 
-# ------------------------------------------------------------
-# Zusammenfassung
-# ------------------------------------------------------------
 Write-Host "`nFertig."
 Write-Host "Ordner mit Bildern: $hitDirs"
 Write-Host "Anzahl kopierter Bilder (gezählt): $($copiedFiles.Count)"
