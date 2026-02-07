@@ -46,29 +46,56 @@ else {
 }
 
 # ------------------------------------------------------------
-# Unterordner durchsuchen (Preview ausschließen) – LiteralPath!
+# Unterordner durchsuchen: pro Hauptordner nur tiefste Ebene mit Bildern
 # ------------------------------------------------------------
-$allDirs = Get-ChildItem -LiteralPath $root -Directory -Recurse -ErrorAction SilentlyContinue |
+$topDirs = Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
            Where-Object { $_.FullName -ne $previewFolder }
 
-Write-Host "Gefundene Unterordner: $($allDirs.Count)"
+Write-Host "Gefundene Hauptordner: $($topDirs.Count)"
 
 $copiedFiles = @()
 $hitDirs = 0
 $copyErrors = 0
 
-foreach ($dir in $allDirs) {
+foreach ($top in $topDirs) {
 
-    # Bilddateien im aktuellen Ordner – LiteralPath!
-    $images = Get-ChildItem -LiteralPath $dir.FullName -File -ErrorAction SilentlyContinue |
-              Where-Object {
-                  $_.Extension -and
-                  @(".jpg", ".jpeg", ".png") -contains $_.Extension.ToLowerInvariant()
-              }
+    # Alle Unterordner inkl. Hauptordner selbst
+    $dirs = @($top) + @(Get-ChildItem -LiteralPath $top.FullName -Directory -Recurse -ErrorAction SilentlyContinue)
 
-    if ($images.Count -eq 0) {
+    # Kandidaten: Ordner, die Bilder enthalten
+    $candidates = foreach ($d in $dirs) {
+        $imgs = Get-ChildItem -LiteralPath $d.FullName -File -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.Extension -and
+                    @(".jpg", ".jpeg", ".png") -contains $_.Extension.ToLowerInvariant()
+                }
+
+        if ($imgs -and $imgs.Count -gt 0) {
+            # Tiefe relativ zum Hauptordner bestimmen
+            $rel = $d.FullName.Substring($top.FullName.Length).Trim('\')
+            $depth = 0
+            if ($rel) { $depth = ($rel -split '\\').Count }
+
+            [pscustomobject]@{
+                Dir    = $d
+                Depth  = $depth
+                Images = $imgs
+            }
+        }
+    }
+
+    if (-not $candidates -or $candidates.Count -eq 0) {
         continue
     }
+
+    # Tiefste Ebene (max Depth)
+    $maxDepth = ($candidates | Measure-Object -Property Depth -Maximum).Maximum
+    $deepest  = $candidates | Where-Object { $_.Depth -eq $maxDepth }
+
+    # Aus tiefsten Ordnern zufällig einen wählen
+    $pickDirObj = Get-Random -InputObject $deepest
+    $images = $pickDirObj.Images
+    $dir    = $pickDirObj.Dir
 
     $hitDirs++
 
@@ -76,15 +103,13 @@ foreach ($dir in $allDirs) {
     $lastFive = $images | Sort-Object Name -Descending | Select-Object -First 5
     $selected = Get-Random -InputObject $lastFive
 
-    # Zielname eindeutig machen
-    $targetName = "{0}_{1}" -f $dir.Name, $selected.Name
+    # Zielname eindeutig machen (TopOrdner + TiefOrdner + Datei)
+    $targetName = "{0}_{1}_{2}" -f $top.Name, $dir.Name, $selected.Name
     $targetPath = Join-Path $previewFolder $targetName
 
-    # Kopieren – LiteralPath für Quelle; Ziel ist ein normaler Pfadstring
     try {
         Copy-Item -LiteralPath $selected.FullName -Destination $targetPath -Force -ErrorAction Stop
 
-        # Nur zählen, wenn wirklich vorhanden
         if (Test-Path -LiteralPath $targetPath) {
             $copiedFiles += $targetName
         }
