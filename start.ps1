@@ -9,8 +9,9 @@ do {
     Write-Host "================================="
     Write-Host ""
     Write-Host "1) Fotos gruppieren (group-photos)"
-    Write-Host "2) Preview-Ordner erstellen (create-photo-preview)"
+    Write-Host "2) Cleanup + Foto- & Video-Previews (Gesamtlauf)"
     Write-Host "3) Archive entpacken & bereinigen (Extract-And-CleanupArchives)"
+    Write-Host "4) Video-Previews erstellen (create-video-preview)"
     Write-Host "0) Beenden"
     Write-Host ""
 
@@ -50,18 +51,28 @@ do {
 
             $root = $dlg.SelectedPath
 
-            # 3) zuerst entpacken/cleanup mit dem selben Root (ohne 2. Dialog)
+            Write-Host "`n[1/3] Archive entpacken & bereinigen..."
             . "$PSScriptRoot\Module\Extract-And-CleanupArchives.ps1" -RootPath $root
 
-            # 2) danach Preview im selben Root (ohne 2. Dialog)
+            Write-Host "`n[2/3] Foto-Previews erstellen..."
             . "$PSScriptRoot\Module\create-photo-preview.ps1" -RootPath $root
 
+            Write-Host "`n[3/3] Video-Previews erstellen..."
+            . "$PSScriptRoot\Module\create-video-preview.ps1" -RootPath $root
+
+            Write-Host "`nGesamtlauf abgeschlossen."
             Read-Host "`nEnter für Rückkehr ins Menü"
         }
 
         "3" {
             Clear-Host
             . "$PSScriptRoot\Module\Extract-And-CleanupArchives.ps1"
+            Read-Host "`nEnter für Rückkehr ins Menü"
+        }
+
+        "4" {
+            Clear-Host
+            . "$PSScriptRoot\Module\create-video-preview.ps1"
             Read-Host "`nEnter für Rückkehr ins Menü"
         }
 
