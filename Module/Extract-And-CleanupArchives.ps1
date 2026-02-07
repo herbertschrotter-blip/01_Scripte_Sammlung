@@ -14,7 +14,9 @@ Fehlercodes:
 #>
 
 [CmdletBinding(SupportsShouldProcess = $true)]
-param()
+param(
+    [string]$RootPath
+)
 
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
 
@@ -146,17 +148,23 @@ if ($Extractor.Type -eq "RAR") {
 }
 
 # -----------------------------------------------------
-# Ordnerauswahl
+# Ordnerauswahl (Dialog nur wenn nicht übergeben)
 # -----------------------------------------------------
-$dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-$dlg.Description = "Root-Ordner auswählen"
+if (-not $RootPath) {
+    $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dlg.Description = "Root-Ordner auswählen"
 
-if ($dlg.ShowDialog() -ne "OK") {
-    Write-Host "E010 Abgebrochen"
-    return
+    if ($dlg.ShowDialog() -ne "OK") {
+        Write-Host "E010 Abgebrochen"
+        return
+    }
+
+    $rootPath = $dlg.SelectedPath
+}
+else {
+    $rootPath = $RootPath
 }
 
-$rootPath = $dlg.SelectedPath
 if (-not (Test-Path -LiteralPath $rootPath)) {
     Write-Host ("E020 Root-Ordner existiert nicht: {0}" -f $rootPath)
     return

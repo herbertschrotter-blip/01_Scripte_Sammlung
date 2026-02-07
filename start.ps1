@@ -10,6 +10,7 @@ do {
     Write-Host ""
     Write-Host "1) Fotos gruppieren (group-photos)"
     Write-Host "2) Preview-Ordner erstellen (create-photo-preview)"
+    Write-Host "3) Archive entpacken & bereinigen (Extract-And-CleanupArchives)"
     Write-Host "0) Beenden"
     Write-Host ""
 
@@ -36,7 +37,31 @@ do {
 
         "2" {
             Clear-Host
-            . "$PSScriptRoot\Module\create-photo-preview.ps1"
+
+            Add-Type -AssemblyName System.Windows.Forms | Out-Null
+            $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+            $dlg.Description = "Root-Ordner auswählen"
+
+            if ($dlg.ShowDialog() -ne "OK") {
+                Write-Host "Abgebrochen."
+                Read-Host "`nEnter für Rückkehr ins Menü"
+                break
+            }
+
+            $root = $dlg.SelectedPath
+
+            # 3) zuerst entpacken/cleanup mit dem selben Root (ohne 2. Dialog)
+            . "$PSScriptRoot\Module\Extract-And-CleanupArchives.ps1" -RootPath $root
+
+            # 2) danach Preview im selben Root (ohne 2. Dialog)
+            . "$PSScriptRoot\Module\create-photo-preview.ps1" -RootPath $root
+
+            Read-Host "`nEnter für Rückkehr ins Menü"
+        }
+
+        "3" {
+            Clear-Host
+            . "$PSScriptRoot\Module\Extract-And-CleanupArchives.ps1"
             Read-Host "`nEnter für Rückkehr ins Menü"
         }
 
