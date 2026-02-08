@@ -1,13 +1,14 @@
 <#
 ManifestHint:
   ExportFunctions = @()
-  Description     = "Lokale HTML-Übersicht für Bildordner (rekursiv), Ordner auswählen + löschen (Papierkorb), Ordner zuklappbar (ganze Zeile klickbar), im zugeklappten Zustand 10 zufällige Preview-Thumbs pro Ordner, beim Aufklappen werden alle Bilder geladen. Viewer mit Navigation (Pfeiltasten + Klick links/rechts). Beenden per X. /img liefert per Streaming."
+  Description     = "Lokale HTML-Übersicht für Bildordner (rekursiv), Root per HTML änderbar (FolderPicker), Ordner auswählen + löschen (Papierkorb), Ordner zuklappbar (ganze Zeile klickbar), im zugeklappten Zustand 10 zufällige Preview-Thumbs pro Ordner, beim Aufklappen werden alle Bilder geladen. Viewer mit Navigation (Pfeiltasten + Klick links/rechts). Beenden per X. /img liefert per Streaming."
   Category        = "Media"
-  Tags            = @("Photos","HTML","Gallery","Recursive","DeleteFolders","RecycleBin","HttpListener","Lightbox","Collapse","Shutdown","OnDemand","Preview10Random","ArrowKeys","NextPrev","Streaming")
+  Tags            = @("Photos","HTML","Gallery","Recursive","DeleteFolders","RecycleBin","HttpListener","Lightbox","Collapse","Shutdown","OnDemand","Preview10Random","ArrowKeys","NextPrev","Streaming","PickRoot")
   Dependencies    = @("System.Net.HttpListener","System.Windows.Forms","Microsoft.VisualBasic")
 
 Zweck:
   - Root wählen (Dialog, wenn -RootPath nicht gesetzt).
+  - Root kann in der HTML per Button geändert werden (FolderPicker am PC).
   - Alle Unterordner scannen und Ordner listen, die Bilddateien enthalten.
   - Zugeklappt: pro Ordner 10 zufällige Preview-Thumbs immer sichtbar.
   - Aufklappen: Preview ausblenden, alle Bilder on-demand laden.
@@ -59,21 +60,34 @@ function Write-Err {
 }
 
 # -----------------------------
-# Root per Dialog (wenn nicht übergeben)
+# Root FolderPicker (wiederverwendbar, auch aus HTML)
 # -----------------------------
-if ([string]::IsNullOrWhiteSpace($RootPath)) {
+function Pick-RootFolderDialog {
+  param([string]$Title = "Root-Ordner auswählen")
+
   Add-Type -AssemblyName System.Windows.Forms | Out-Null
   $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-  $dlg.Description = "Root-Ordner auswählen"
+  $dlg.Description = $Title
   $dlg.ShowNewFolderButton = $false
 
   if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK -or
       [string]::IsNullOrWhiteSpace($dlg.SelectedPath)) {
+    return $null
+  }
+
+  return $dlg.SelectedPath
+}
+
+# -----------------------------
+# Root per Dialog (wenn nicht übergeben)
+# -----------------------------
+if ([string]::IsNullOrWhiteSpace($RootPath)) {
+  $picked = Pick-RootFolderDialog -Title "Root-Ordner auswählen"
+  if ([string]::IsNullOrWhiteSpace($picked)) {
     Write-Err "E010" "Kein Root-Ordner ausgewählt"
     return
   }
-
-  $RootPath = $dlg.SelectedPath
+  $RootPath = $picked
 }
 
 if (-not (Test-Path -LiteralPath $RootPath -PathType Container)) {
@@ -256,6 +270,8 @@ function Render-IndexPage {
       <div class="hint"><b>Löschmodus:</b> $hardInfo</div>
     </div>
 
+    <button class="neutral" type="button" onclick="pickRoot()">Root ändern</button>
+
     <div style="flex:1"></div>
 
     <input id="filter" type="text" placeholder="Filter (Teilstring im Ordnerpfad)" oninput="applyFilter()" />
@@ -290,6 +306,13 @@ function Render-IndexPage {
   </div>
 
 <script>
+// --- Root wechseln (Server zeigt Ordnerdialog) ---
+function pickRoot(){
+  fetch("/pickroot", { method:"POST" })
+    .then(() => location.href = "/")
+    .catch(() => alert("Root ändern fehlgeschlagen."));
+}
+
 // --- Thumbnail-Größen (persistiert) ---
 function applyThumbSize(mode){
   const px = (mode === "s") ? 90 : (mode === "l") ? 200 : 140;
@@ -585,6 +608,35 @@ try {
     try {
       if ($path -eq "/" -and $req.HttpMethod -eq "GET") {
         $html = Render-IndexPage -RootFull $RootFull -Folders $Folders
+        Send-ResponseHtml -Response $res -Html $html
+        continue
+      }
+
+      if ($path -eq "/pickroot" -and $req.HttpMethod -eq "POST") {
+        $picked = Pick-RootFolderDialog -Title "Neuen Root-Ordner auswählen"
+        if ([string]::IsNullOrWhiteSpace($picked)) {
+          $html = Render-IndexPage -RootFull $RootFull -Folders $Folders -Msg "Root unverändert (Abbruch)."
+          Send-ResponseHtml -Response $res -Html $html
+          continue
+        }
+
+        if (-not (Test-Path -LiteralPath $picked -PathType Container)) {
+          $html = Render-IndexPage -RootFull $RootFull -Folders $Folders -Msg "Root unverändert (Pfad ungültig)."
+          Send-ResponseHtml -Response $res -Html $html
+          continue
+        }
+
+        $RootFull = [System.IO.Path]::GetFullPath($picked)
+
+        try {
+          $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt
+        } catch {
+          $html = Render-IndexPage -RootFull $RootFull -Folders $Folders -Msg ("Root geändert, Scan fehlgeschlagen: " + $_.Exception.Message)
+          Send-ResponseHtml -Response $res -Html $html
+          continue
+        }
+
+        $html = Render-IndexPage -RootFull $RootFull -Folders $Folders -Msg "Root geändert."
         Send-ResponseHtml -Response $res -Html $html
         continue
       }
