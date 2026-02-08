@@ -1,9 +1,9 @@
 <#
 ManifestHint:
   ExportFunctions = @()
-  Description     = "Lokale HTML-Übersicht für Bildordner (rekursiv), Root per HTML änderbar (FolderPicker), Ordner auswählen + löschen (Papierkorb), Ordner zuklappbar (ganze Zeile klickbar), im zugeklappten Zustand 10 zufällige Preview-Thumbs pro Ordner, beim Aufklappen werden alle Bilder geladen. Viewer mit Navigation (Pfeiltasten + Klick links/rechts). Beenden per X. /img liefert per Streaming."
+  Description     = "Lokale HTML-Übersicht für Bildordner (rekursiv), Root per HTML änderbar (FolderPicker), Ordner ODER einzelne Bilder auswählen + löschen (Papierkorb), Ordner zuklappbar (ganze Zeile klickbar), im zugeklappten Zustand 10 zufällige Preview-Thumbs pro Ordner, beim Aufklappen werden alle Bilder geladen. Viewer mit Navigation (Pfeiltasten + Klick links/rechts). Beenden per X. /img liefert per Streaming."
   Category        = "Media"
-  Tags            = @("Photos","HTML","Gallery","Recursive","DeleteFolders","RecycleBin","HttpListener","Lightbox","Collapse","Shutdown","OnDemand","Preview10Random","ArrowKeys","NextPrev","Streaming","PickRoot")
+  Tags            = @("Photos","HTML","Gallery","Recursive","DeleteFolders","DeleteImages","RecycleBin","HttpListener","Lightbox","Collapse","Shutdown","OnDemand","Preview10Random","ArrowKeys","NextPrev","Streaming","PickRoot")
   Dependencies    = @("System.Net.HttpListener","System.Windows.Forms","Microsoft.VisualBasic")
 
 Zweck:
@@ -12,10 +12,9 @@ Zweck:
   - Alle Unterordner scannen und Ordner listen, die Bilddateien enthalten.
   - Zugeklappt: pro Ordner 10 zufällige Preview-Thumbs immer sichtbar.
   - Aufklappen: Preview ausblenden, alle Bilder on-demand laden.
-  - Thumbnail klick -> großer Viewer im Browser (Overlay/Lightbox) + Navigation:
-      -> Pfeiltasten Links/Rechts
-      -> Klick linke Bildhälfte = zurück, rechte Bildhälfte = vorwärts
+  - Thumbnail klick -> großer Viewer im Browser (Overlay/Lightbox) + Navigation.
   - Ausgewählte Ordner löschen (Papierkorb oder HardDelete).
+  - Ausgewählte Einzelbilder löschen (Papierkorb oder HardDelete).
   - Tool per X in der HTML beenden (kein Strg+C).
   - /img: Streaming statt ReadAllBytes (RAM-schonend).
 
@@ -97,6 +96,36 @@ function Pick-RootFolderDialog {
     try { $owner.Close() } catch {}
     try { $owner.Dispose() } catch {}
   }
+}
+
+# -----------------------------
+# NEU: Einzelbild sicher löschen (Papierkorb / HardDelete)
+# -----------------------------
+function Delete-ImageFileSafe {
+  param(
+    [Parameter(Mandatory)][string]$RootFull,
+    [Parameter(Mandatory)][string]$RelFile,
+    [switch]$HardDelete
+  )
+
+  # Root-Safe Resolve (nutzt vorhandene Lib-Funktion)
+  $full = Resolve-FullPathSafe -RootFull $RootFull -RelPath $RelFile
+
+  if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
+    return
+  }
+
+  if ($HardDelete) {
+    Remove-Item -LiteralPath $full -Force
+    return
+  }
+
+  Add-Type -AssemblyName Microsoft.VisualBasic | Out-Null
+  [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
+    $full,
+    [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+    [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
+  )
 }
 
 # -----------------------------
@@ -194,6 +223,19 @@ function Render-IndexPage {
   .previewRow.isHidden{display:none;}
 
   :root{ --thumb:140px; }
+
+  /* NEU: Thumb-Wrapper mit Checkbox-Overlay */
+  .tw{position:relative; display:inline-block;}
+  .tw input.sel{
+    position:absolute;
+    top:6px;
+    left:6px;
+    width:18px;
+    height:18px;
+    z-index:2;
+    accent-color:#c62828;
+  }
+
   img.t{width:var(--thumb); height:var(--thumb); object-fit:cover; border-radius:10px; background:#ddd; cursor:zoom-in;}
 
   input[type=text]{padding:8px; min-width:260px;}
@@ -304,9 +346,12 @@ function Render-IndexPage {
       <button class="neutral" type="button" onclick="setThumbSize('l')">groß</button>
     </div>
 
-    <button class="neutral" type="button" onclick="selectAll(true)">Alle</button>
-    <button class="neutral" type="button" onclick="selectAll(false)">Keine</button>
+    <button class="neutral" type="button" onclick="selectAll(true)">Alle Ordner</button>
+    <button class="neutral" type="button" onclick="selectAll(false)">Keine Ordner</button>
     <button class="danger"  type="button" onclick="submitDelete()">Ausgewählte Ordner löschen</button>
+
+    <!-- NEU: Bilder löschen -->
+    <button class="danger" type="button" onclick="submitDeleteImages()">Ausgewählte Bilder löschen</button>
   </div>
 
   $msgHtml
@@ -316,6 +361,11 @@ function Render-IndexPage {
     <div id="list" class="grid">
       $( $rows.ToString() )
     </div>
+  </form>
+
+  <!-- NEU: eigenes Form für Bilder -->
+  <form id="imgForm" method="post" action="/deleteimg">
+    <input type="hidden" name="confirm" value="0" />
   </form>
 
   <div id="viewer" onclick="closeViewer()">
@@ -365,6 +415,25 @@ function submitDelete(){
   if(!ok) return;
   document.querySelector("#delForm input[name=confirm]").value = "1";
   document.getElementById("delForm").submit();
+}
+
+// NEU: Bilder löschen
+function submitDeleteImages(){
+  const imgs = Array.from(document.querySelectorAll("input[type=checkbox].sel:checked")).map(x => x.value);
+  if(imgs.length === 0){ alert("Keine Bilder ausgewählt."); return; }
+  const ok = confirm("Wirklich " + imgs.length + " Bilder löschen? (Papierkorb/HardDelete je nach Modus)");
+  if(!ok) return;
+
+  const form = document.getElementById("imgForm");
+  form.innerHTML = '<input type="hidden" name="confirm" value="1" />';
+  imgs.forEach(p => {
+    const i = document.createElement("input");
+    i.type = "hidden";
+    i.name = "img";
+    i.value = p;
+    form.appendChild(i);
+  });
+  form.submit();
 }
 
 // ganze Zeile klickbar, ohne Checkbox/Button zu triggern
@@ -473,6 +542,37 @@ function pickRandomUnique(arr, n){
   return out;
 }
 
+// NEU: Thumb Element bauen inkl. Checkbox (value=RelPath)
+function relFromImgUrl(src){
+  // src ist /img?path=<urlenc(rel)>
+  const m = src.match(/\/img\?path=([^&]+)/i);
+  if(!m) return "";
+  try { return decodeURIComponent(m[1]); } catch { return ""; }
+}
+function makeThumb(folderKey, src, idx){
+  const wrap = document.createElement("span");
+  wrap.className = "tw";
+
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.className = "sel";
+  cb.value = relFromImgUrl(src);
+  cb.addEventListener("click", (ev) => ev.stopPropagation());
+
+  const img = document.createElement("img");
+  img.className = "t";
+  img.loading = "lazy";
+  img.src = src;
+  img.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    openViewerBy(folderKey, idx);
+  });
+
+  wrap.appendChild(cb);
+  wrap.appendChild(img);
+  return wrap;
+}
+
 function ensurePreview(card){
   const preview = card.querySelector(".previewRow");
   if (!preview || preview.dataset.previewLoaded === "1") return;
@@ -486,8 +586,6 @@ function ensurePreview(card){
 
   const folderKey = card.getAttribute("data-path");
 
-  // Wichtig: Viewer soll auch im Preview durch alle Bilder blättern können
-  // -> Gesamt-URL-Liste bereits hier merken
   if (!window.folderImages[folderKey] || window.folderImages[folderKey].length === 0) {
     window.folderImages[folderKey] = urls;
   }
@@ -496,17 +594,9 @@ function ensurePreview(card){
 
   const frag = document.createDocumentFragment();
   sample.forEach((src) => {
-    const img = document.createElement("img");
-    img.className = "t";
-    img.loading = "lazy";
-    img.src = src;
-    img.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      const all = window.folderImages[folderKey] || urls;
-      const idx = all.indexOf(src);
-      openViewerBy(folderKey, idx >= 0 ? idx : 0);
-    });
-    frag.appendChild(img);
+    const all = window.folderImages[folderKey] || urls;
+    const idx = all.indexOf(src);
+    frag.appendChild(makeThumb(folderKey, src, idx >= 0 ? idx : 0));
   });
 
   preview.appendChild(frag);
@@ -518,7 +608,7 @@ function initPreviews(){
   let i = 0;
 
   function step(){
-    const batch = 10; // kleine Batches, damit UI nicht laggt
+    const batch = 10;
     let n = 0;
     while(i < cards.length && n < batch){
       ensurePreview(cards[i]);
@@ -531,13 +621,12 @@ function initPreviews(){
 
 document.addEventListener("DOMContentLoaded", initPreviews);
 
-// --- Ordner auf/zu: Preview/Full umschalten, Full on-demand laden ---
+// --- Ordner auf/zu ---
 function toggleFolder(btn){
   const card = btn.closest(".card");
   const thumbs = card.querySelector(".thumbs");
   const preview = card.querySelector(".previewRow");
 
-  // offen -> zuklappen
   if (!thumbs.classList.contains("isCollapsed")) {
     thumbs.classList.add("isCollapsed");
     unloadThumbs(thumbs);
@@ -548,7 +637,6 @@ function toggleFolder(btn){
     return;
   }
 
-  // zu -> aufklappen
   thumbs.classList.remove("isCollapsed");
   if (preview) preview.classList.add("isHidden");
   btn.textContent = "▾";
@@ -559,20 +647,11 @@ function toggleFolder(btn){
   const urls = data.split("|").filter(Boolean);
   const folderKey = card.getAttribute("data-path");
 
-  // Für Viewer Navigation immer Gesamt-Liste setzen
   window.folderImages[folderKey] = urls;
 
   const frag = document.createDocumentFragment();
   urls.forEach((src, i) => {
-    const img = document.createElement("img");
-    img.className = "t";
-    img.loading = "lazy";
-    img.src = src;
-    img.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      openViewerBy(folderKey, i);
-    });
-    frag.appendChild(img);
+    frag.appendChild(makeThumb(folderKey, src, i));
   });
 
   thumbs.appendChild(frag);
@@ -704,6 +783,57 @@ try {
           $fs.Close()
           $res.OutputStream.Close()
         }
+        continue
+      }
+
+      # -----------------------------
+      # NEU: Einzelbilder löschen
+      # -----------------------------
+      if ($path -eq "/deleteimg" -and $req.HttpMethod -eq "POST") {
+        $body = Read-RequestBody -Request $req
+        $form = Parse-FormUrlEncoded -Body $body
+
+        if (-not $form.ContainsKey("confirm") -or $form["confirm"] -ne "1") {
+          $html = Render-IndexPage -RootFull $RootFull -Folders $Folders -Msg "Bild-Löschen abgebrochen (keine Bestätigung)."
+          Send-ResponseHtml -Response $res -Html $html
+          continue
+        }
+
+        $selected = @()
+        if ($form.ContainsKey("img")) {
+          if ($form["img"] -is [System.Collections.IList]) { $selected = @($form["img"]) }
+          else { $selected = @($form["img"]) }
+        }
+
+        if ($selected.Count -eq 0) {
+          $html = Render-IndexPage -RootFull $RootFull -Folders $Folders -Msg "Keine Bilder ausgewählt."
+          Send-ResponseHtml -Response $res -Html $html
+          continue
+        }
+
+        $ok = 0
+        $fail = 0
+        $errors = @()
+
+        foreach ($relFile in $selected) {
+          try {
+            Delete-ImageFileSafe -RootFull $RootFull -RelFile $relFile -HardDelete:$HardDelete
+            $ok++
+          } catch {
+            $fail++
+            $errors += "E040 $relFile : $($_.Exception.Message)"
+          }
+        }
+
+        $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt
+
+        $msg = "Bilder gelöscht: OK=$ok | FAIL=$fail"
+        if ($errors.Count -gt 0) {
+          $msg += " | Fehler: " + ($errors -join " || ")
+        }
+
+        $html = Render-IndexPage -RootFull $RootFull -Folders $Folders -Msg $msg
+        Send-ResponseHtml -Response $res -Html $html
         continue
       }
 
