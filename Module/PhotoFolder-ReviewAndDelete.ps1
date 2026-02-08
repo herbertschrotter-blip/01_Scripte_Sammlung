@@ -66,16 +66,37 @@ function Pick-RootFolderDialog {
   param([string]$Title = "Root-Ordner auswählen")
 
   Add-Type -AssemblyName System.Windows.Forms | Out-Null
-  $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-  $dlg.Description = $Title
-  $dlg.ShowNewFolderButton = $false
 
-  if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK -or
-      [string]::IsNullOrWhiteSpace($dlg.SelectedPath)) {
-    return $null
+  # Unsichtbares Owner-Form, damit der Dialog im Vordergrund erscheint
+  $owner = New-Object System.Windows.Forms.Form
+  $owner.Text = "PickRootOwner"
+  $owner.TopMost = $true
+  $owner.ShowInTaskbar = $false
+  $owner.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedToolWindow
+  $owner.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+  $owner.Location = New-Object System.Drawing.Point(-32000, -32000)
+  $owner.Size = New-Object System.Drawing.Size(1, 1)
+
+  try {
+    $owner.Show() | Out-Null
+    $owner.Activate() | Out-Null
+
+    $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dlg.Description = $Title
+    $dlg.ShowNewFolderButton = $false
+
+    $result = $dlg.ShowDialog($owner)
+    if ($result -ne [System.Windows.Forms.DialogResult]::OK -or
+        [string]::IsNullOrWhiteSpace($dlg.SelectedPath)) {
+      return $null
+    }
+
+    return $dlg.SelectedPath
   }
-
-  return $dlg.SelectedPath
+  finally {
+    try { $owner.Close() } catch {}
+    try { $owner.Dispose() } catch {}
+  }
 }
 
 # -----------------------------
