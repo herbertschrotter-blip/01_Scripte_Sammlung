@@ -13,6 +13,7 @@ do {
     Write-Host "3) Archive entpacken & bereinigen (Extract-And-CleanupArchives)"
     Write-Host "4) Video-Previews erstellen (create-video-preview)"
     Write-Host "5) Fotos aus mehreren Ordnern verschieben (move-photos-multifolder)"
+    Write-Host "6) Foto-Ordner prüfen & löschen (HTML-Übersicht)"
     Write-Host "0) Beenden"
     Write-Host ""
 
@@ -80,6 +81,15 @@ do {
         "5" {
             Clear-Host
             . "$PSScriptRoot\Module\move-photos-multifolder.ps1"
+            Read-Host "`nEnter für Rückkehr ins Menü"
+        }
+
+        "6" {
+            Clear-Host
+
+            # HTML-Tool: Ordnerauswahl erfolgt im Script selbst
+            . "$PSScriptRoot\Module\PhotoFolder-ReviewAndDelete.ps1"
+
             Read-Host "`nEnter für Rückkehr ins Menü"
         }
 
