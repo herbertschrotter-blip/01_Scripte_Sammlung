@@ -48,18 +48,32 @@ Write-Host "`nRoot-Ordner:`n$root"
 # ------------------------------------------------------------
 $ffmpeg = $null
 
-$cmd = Get-Command ffmpeg.exe -ErrorAction SilentlyContinue
-if ($cmd) { $ffmpeg = $cmd.Source }
+# 1) Projektstruktur: ...\Tools\ffmpeg\ffmpeg.exe (ausgehend vom Script-Ordner)
+# Script liegt in \Module\  -> Root ist 1 Ebene darüber
+$projectRoot = Split-Path -Parent $PSScriptRoot
+$ffmpegLocal = Join-Path $projectRoot "Tools\ffmpeg\ffmpeg.exe"
+if (Test-Path -LiteralPath $ffmpegLocal) {
+    $ffmpeg = $ffmpegLocal
+}
 
+# 2) Fallback: ffmpeg.exe im PATH
 if (-not $ffmpeg) {
-    $local = Join-Path $PSScriptRoot "ffmpeg.exe"
-    if (Test-Path -LiteralPath $local) {
-        $ffmpeg = $local
+    $cmd = Get-Command ffmpeg.exe -ErrorAction SilentlyContinue
+    if ($cmd) { $ffmpeg = $cmd.Source }
+}
+
+# 3) (Optional) Legacy: falls doch noch neben dem Script liegt
+if (-not $ffmpeg) {
+    $legacy = Join-Path $PSScriptRoot "ffmpeg.exe"
+    if (Test-Path -LiteralPath $legacy) {
+        $ffmpeg = $legacy
     }
 }
 
 if (-not $ffmpeg) {
     Write-Host "E030 ffmpeg.exe nicht gefunden"
+    Write-Host ("[DBG] erwartet: {0}" -f $ffmpegLocal)
+    Write-Host ("[DBG] PSScriptRoot: {0}" -f $PSScriptRoot)
     return
 }
 
