@@ -40,11 +40,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # ------------------------------------------------------------
-# Module laden (liegen im gleichen Ordner wie dieses Script)
+# Libs laden (aus ..\Lib)
 # ------------------------------------------------------------
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-. (Join-Path $ScriptDir "Lib_Web.ps1")
-. (Join-Path $ScriptDir "Lib_Index.ps1")
+$ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProjectRoot = Split-Path -Parent $ScriptDir
+
+. (Join-Path $ProjectRoot "Lib\Lib_Web.ps1")
+. (Join-Path $ProjectRoot "Lib\Lib_Index.ps1")
 
 # -----------------------------
 # Einstellungen
