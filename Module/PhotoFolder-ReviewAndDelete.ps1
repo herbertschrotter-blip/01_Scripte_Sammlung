@@ -1,16 +1,16 @@
 <#
 ManifestHint:
   ExportFunctions = @()
-  Description     = "Lokale HTML-Übersicht für Bildordner (rekursiv), Ordner auswählen + löschen (Papierkorb), Ordner zuklappbar (ganze Zeile klickbar), Thumbnails on-demand (lagarm), Thumbnail-Größenumschaltung (S/M/L), Bild-Viewer mit Navigation (Pfeiltasten + Klick links/rechts), Beenden per X. /img liefert per Streaming."
+  Description     = "Lokale HTML-Übersicht für Bildordner (rekursiv), Ordner auswählen + löschen (Papierkorb), Ordner zuklappbar (ganze Zeile klickbar), im zugeklappten Zustand 10 zufällige Preview-Thumbs pro Ordner, beim Aufklappen werden alle Bilder geladen. Viewer mit Navigation (Pfeiltasten + Klick links/rechts). Beenden per X. /img liefert per Streaming."
   Category        = "Media"
-  Tags            = @("Photos","HTML","Gallery","Recursive","DeleteFolders","RecycleBin","HttpListener","Lightbox","Collapse","Shutdown","OnDemand","ThumbSize","ArrowKeys","NextPrev","Streaming")
+  Tags            = @("Photos","HTML","Gallery","Recursive","DeleteFolders","RecycleBin","HttpListener","Lightbox","Collapse","Shutdown","OnDemand","Preview10Random","ArrowKeys","NextPrev","Streaming")
   Dependencies    = @("System.Net.HttpListener","System.Windows.Forms","Microsoft.VisualBasic")
 
 Zweck:
   - Root wählen (Dialog, wenn -RootPath nicht gesetzt).
   - Alle Unterordner scannen und Ordner listen, die Bilddateien enthalten.
-  - Pro Ordner: Bilder on-demand laden (erst beim Aufklappen werden <img>-Tags erzeugt).
-  - Thumbnail-Größe umschaltbar (klein/mittel/groß), Einstellung bleibt gespeichert.
+  - Zugeklappt: pro Ordner 10 zufällige Preview-Thumbs immer sichtbar.
+  - Aufklappen: Preview ausblenden, alle Bilder on-demand laden.
   - Thumbnail klick -> großer Viewer im Browser (Overlay/Lightbox) + Navigation:
       -> Pfeiltasten Links/Rechts
       -> Klick linke Bildhälfte = zurück, rechte Bildhälfte = vorwärts
@@ -40,7 +40,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # ------------------------------------------------------------
-# Libs laden (aus ..\Lib)
+# Libs laden (aus ..\Lib) – Script liegt in \Module\
 # ------------------------------------------------------------
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
@@ -106,6 +106,7 @@ function Render-IndexPage {
     $rel = $f.RelPath
     $cnt = $f.ImgCount
 
+    # Für Preview + Vollansicht werden URLs als Liste abgelegt (On-Demand)
     $imgList = ($f.ImagesRel | ForEach-Object { "/img?path=$(UrlEncode($_))" }) -join "|"
 
     [void]$rows.AppendLine(@"
@@ -116,6 +117,11 @@ function Render-IndexPage {
     <span class="meta">($cnt)</span>
     <button class="toggleBtn" type="button" onclick="toggleFolder(this)">▸</button>
   </div>
+
+  <!-- Zugeklappt: 10 zufällige Preview-Thumbs -->
+  <div class="previewRow" data-preview-loaded="0" data-images="$(HtmlEncode($imgList))"></div>
+
+  <!-- Aufgeklappt: alle Bilder (on-demand) -->
   <div class="thumbs isCollapsed" data-loaded="0" data-images="$(HtmlEncode($imgList))"></div>
 </div>
 "@)
@@ -145,8 +151,12 @@ function Render-IndexPage {
   .hdr{display:flex; gap:10px; align-items:center; cursor:pointer; user-select:none;}
   .path{font-weight:600; word-break:break-all;}
   .meta{opacity:.7;}
+
   .thumbs{display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;}
   .thumbs.isCollapsed{display:none;}
+
+  .previewRow{display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;}
+  .previewRow.isHidden{display:none;}
 
   :root{ --thumb:140px; }
   img.t{width:var(--thumb); height:var(--thumb); object-fit:cover; border-radius:10px; background:#ddd; cursor:zoom-in;}
@@ -327,19 +337,18 @@ function toggleFolderRow(ev, hdrEl){
 }
 
 // Entfernt viele <img>-Elemente in kleinen Batches, damit das Zuklappen nicht "einfriert"
-function unloadThumbs(thumbs){
+function unloadThumbs(container){
   const batchSize = 25;
   function step(){
     let n = 0;
-    while(thumbs.firstChild && n < batchSize){
-      thumbs.removeChild(thumbs.firstChild);
+    while(container.firstChild && n < batchSize){
+      container.removeChild(container.firstChild);
       n++;
     }
-    if(thumbs.firstChild){
+    if(container.firstChild){
       requestAnimationFrame(step);
       return;
     }
-    thumbs.dataset.loaded = "0";
   }
   requestAnimationFrame(step);
 }
@@ -381,46 +390,6 @@ function viewerNext(){
   openViewerBy(st.folderKey, st.idx);
 }
 
-function toggleFolder(btn){
-  const card = btn.closest(".card");
-  const thumbs = card.querySelector(".thumbs");
-
-  if (!thumbs.classList.contains("isCollapsed")) {
-    thumbs.classList.add("isCollapsed");
-    unloadThumbs(thumbs);
-    btn.textContent = "▸";
-    return;
-  }
-
-  thumbs.classList.remove("isCollapsed");
-  btn.textContent = "▾";
-
-  if (thumbs.dataset.loaded === "1") return;
-
-  const data = thumbs.dataset.images || "";
-  if (!data) { thumbs.dataset.loaded = "1"; return; }
-
-  const urls = data.split("|").filter(Boolean);
-  const folderKey = card.getAttribute("data-path");
-
-  window.folderImages = window.folderImages || {};
-  window.folderImages[folderKey] = urls;
-
-  const frag = document.createDocumentFragment();
-
-  urls.forEach((src, i) => {
-    const img = document.createElement("img");
-    img.className = "t";
-    img.loading = "lazy";
-    img.src = src;
-    img.addEventListener("click", () => openViewerBy(folderKey, i));
-    frag.appendChild(img);
-  });
-
-  thumbs.appendChild(frag);
-  thumbs.dataset.loaded = "1";
-}
-
 function closeViewer(){
   const v = document.getElementById("viewer");
   const img = document.getElementById("viewerImg");
@@ -428,7 +397,11 @@ function closeViewer(){
   img.src = "";
 }
 
+// Tastatursteuerung (nur wenn Viewer offen)
 document.addEventListener("keydown", (e) => {
+  const v = document.getElementById("viewer");
+  if (v.style.display !== "flex") return;
+
   if(e.key === "Escape") closeViewer();
   if(e.key === "ArrowLeft") viewerPrev();
   if(e.key === "ArrowRight") viewerNext();
@@ -441,6 +414,126 @@ document.getElementById("viewerImg").addEventListener("click", (e) => {
   if (x < rect.width / 2) viewerPrev();
   else viewerNext();
 });
+
+// --- Preview: 10 zufällige Bilder pro Ordner (im zugeklappten Zustand sichtbar) ---
+function pickRandomUnique(arr, n){
+  if (arr.length <= n) return arr.slice();
+  const out = [];
+  const used = new Set();
+  while(out.length < n){
+    const i = Math.floor(Math.random() * arr.length);
+    if (used.has(i)) continue;
+    used.add(i);
+    out.push(arr[i]);
+  }
+  return out;
+}
+
+function ensurePreview(card){
+  const preview = card.querySelector(".previewRow");
+  if (!preview || preview.dataset.previewLoaded === "1") return;
+
+  const data = preview.dataset.images || "";
+  const urls = data.split("|").filter(Boolean);
+  if (!urls.length){
+    preview.dataset.previewLoaded = "1";
+    return;
+  }
+
+  const folderKey = card.getAttribute("data-path");
+
+  // Wichtig: Viewer soll auch im Preview durch alle Bilder blättern können
+  // -> Gesamt-URL-Liste bereits hier merken
+  if (!window.folderImages[folderKey] || window.folderImages[folderKey].length === 0) {
+    window.folderImages[folderKey] = urls;
+  }
+
+  const sample = pickRandomUnique(urls, 10);
+
+  const frag = document.createDocumentFragment();
+  sample.forEach((src) => {
+    const img = document.createElement("img");
+    img.className = "t";
+    img.loading = "lazy";
+    img.src = src;
+    img.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const all = window.folderImages[folderKey] || urls;
+      const idx = all.indexOf(src);
+      openViewerBy(folderKey, idx >= 0 ? idx : 0);
+    });
+    frag.appendChild(img);
+  });
+
+  preview.appendChild(frag);
+  preview.dataset.previewLoaded = "1";
+}
+
+function initPreviews(){
+  const cards = Array.from(document.querySelectorAll(".card"));
+  let i = 0;
+
+  function step(){
+    const batch = 10; // kleine Batches, damit UI nicht laggt
+    let n = 0;
+    while(i < cards.length && n < batch){
+      ensurePreview(cards[i]);
+      i++; n++;
+    }
+    if (i < cards.length) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+document.addEventListener("DOMContentLoaded", initPreviews);
+
+// --- Ordner auf/zu: Preview/Full umschalten, Full on-demand laden ---
+function toggleFolder(btn){
+  const card = btn.closest(".card");
+  const thumbs = card.querySelector(".thumbs");
+  const preview = card.querySelector(".previewRow");
+
+  // offen -> zuklappen
+  if (!thumbs.classList.contains("isCollapsed")) {
+    thumbs.classList.add("isCollapsed");
+    unloadThumbs(thumbs);
+    thumbs.dataset.loaded = "0";
+
+    if (preview) preview.classList.remove("isHidden");
+    btn.textContent = "▸";
+    return;
+  }
+
+  // zu -> aufklappen
+  thumbs.classList.remove("isCollapsed");
+  if (preview) preview.classList.add("isHidden");
+  btn.textContent = "▾";
+
+  if (thumbs.dataset.loaded === "1") return;
+
+  const data = thumbs.dataset.images || "";
+  const urls = data.split("|").filter(Boolean);
+  const folderKey = card.getAttribute("data-path");
+
+  // Für Viewer Navigation immer Gesamt-Liste setzen
+  window.folderImages[folderKey] = urls;
+
+  const frag = document.createDocumentFragment();
+  urls.forEach((src, i) => {
+    const img = document.createElement("img");
+    img.className = "t";
+    img.loading = "lazy";
+    img.src = src;
+    img.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openViewerBy(folderKey, i);
+    });
+    frag.appendChild(img);
+  });
+
+  thumbs.appendChild(frag);
+  thumbs.dataset.loaded = "1";
+}
 
 function shutdown(){
   if(!confirm("HTML-Tool beenden?")) return;
