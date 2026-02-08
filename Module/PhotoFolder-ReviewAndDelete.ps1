@@ -1,9 +1,9 @@
 <#
 ManifestHint:
   ExportFunctions = @()
-  Description     = "Lokale HTML-Übersicht für Bildordner (rekursiv), Root per HTML änderbar (FolderPicker), Ordner ODER einzelne Bilder auswählen + löschen (Papierkorb), Ordner zuklappbar (ganze Zeile klickbar), im zugeklappten Zustand 10 zufällige Preview-Thumbs pro Ordner, beim Aufklappen werden alle Bilder geladen. Viewer mit Navigation (Pfeiltasten + Klick links/rechts). Beenden per X. /img liefert per Streaming."
+  Description     = "Lokale HTML-Übersicht für Bildordner (rekursiv), Root per HTML änderbar (FolderPicker), Ordner UND einzelne Bilder auswählen + löschen (Papierkorb), Ordner zuklappbar (ganze Zeile klickbar), im zugeklappten Zustand 10 zufällige Preview-Thumbs pro Ordner, beim Aufklappen werden alle Bilder geladen. Viewer mit Navigation (Pfeiltasten + Klick links/rechts). Beenden per X. /img liefert per Streaming."
   Category        = "Media"
-  Tags            = @("Photos","HTML","Gallery","Recursive","DeleteFolders","DeleteImages","RecycleBin","HttpListener","Lightbox","Collapse","Shutdown","OnDemand","Preview10Random","ArrowKeys","NextPrev","Streaming","PickRoot")
+  Tags            = @("Photos","HTML","Gallery","Recursive","DeleteFolders","DeleteImages","RecycleBin","HttpListener","Lightbox","Collapse","Shutdown","OnDemand","Preview10Random","ArrowKeys","NextPrev","Streaming","PickRoot","StickyTopBar")
   Dependencies    = @("System.Net.HttpListener","System.Windows.Forms","Microsoft.VisualBasic")
 
 Zweck:
@@ -13,8 +13,7 @@ Zweck:
   - Zugeklappt: pro Ordner 10 zufällige Preview-Thumbs immer sichtbar.
   - Aufklappen: Preview ausblenden, alle Bilder on-demand laden.
   - Thumbnail klick -> großer Viewer im Browser (Overlay/Lightbox) + Navigation.
-  - Ausgewählte Ordner löschen (Papierkorb oder HardDelete).
-  - Ausgewählte Einzelbilder löschen (Papierkorb oder HardDelete).
+  - Ein Button "Löschen": löscht ausgewählte Ordner und/oder ausgewählte Einzelbilder.
   - Tool per X in der HTML beenden (kein Strg+C).
   - /img: Streaming statt ReadAllBytes (RAM-schonend).
 
@@ -108,7 +107,6 @@ function Delete-ImageFileSafe {
     [switch]$HardDelete
   )
 
-  # Root-Safe Resolve (nutzt vorhandene Lib-Funktion)
   $full = Resolve-FullPathSafe -RootFull $RootFull -RelPath $RelFile
 
   if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
@@ -170,7 +168,6 @@ function Render-IndexPage {
     $rel = $f.RelPath
     $cnt = $f.ImgCount
 
-    # Für Preview + Vollansicht werden URLs als Liste abgelegt (On-Demand)
     $imgList = ($f.ImagesRel | ForEach-Object { "/img?path=$(UrlEncode($_))" }) -join "|"
 
     [void]$rows.AppendLine(@"
@@ -182,10 +179,7 @@ function Render-IndexPage {
     <button class="toggleBtn" type="button" onclick="toggleFolder(this)">▸</button>
   </div>
 
-  <!-- Zugeklappt: 10 zufällige Preview-Thumbs -->
   <div class="previewRow" data-preview-loaded="0" data-images="$(HtmlEncode($imgList))"></div>
-
-  <!-- Aufgeklappt: alle Bilder (on-demand) -->
   <div class="thumbs isCollapsed" data-loaded="0" data-images="$(HtmlEncode($imgList))"></div>
 </div>
 "@)
@@ -207,7 +201,18 @@ function Render-IndexPage {
 <title>Foto-Ordner Review & Delete</title>
 <style>
   body{font-family:Arial, sans-serif; margin:16px; background:#f7f7f7;}
-  .top{display:flex; gap:12px; align-items:center; flex-wrap:wrap;}
+
+  /* NEU: Top-Leiste bleibt sichtbar */
+  .top{
+    position:sticky;
+    top:0;
+    z-index:5000;
+    display:flex;
+    gap:12px;
+    align-items:center;
+    flex-wrap:wrap;
+  }
+
   .box{background:#fff; padding:12px; border-radius:10px; box-shadow:0 1px 4px rgba(0,0,0,.08);}
   .msg{margin:12px 0; padding:10px; border-radius:8px; background:#e9f5ff;}
   .grid{display:grid; grid-template-columns:1fr; gap:10px; margin-top:12px;}
@@ -224,7 +229,7 @@ function Render-IndexPage {
 
   :root{ --thumb:140px; }
 
-  /* NEU: Thumb-Wrapper mit Checkbox-Overlay */
+  /* Thumb-Wrapper mit Checkbox-Overlay */
   .tw{position:relative; display:inline-block;}
   .tw input.sel{
     position:absolute;
@@ -268,6 +273,7 @@ function Render-IndexPage {
     height:36px;
     cursor:pointer;
     box-shadow:0 1px 4px rgba(0,0,0,.20);
+    z-index:6000;
   }
   .closeBtn:hover{ background:#b71c1c; }
 
@@ -348,10 +354,9 @@ function Render-IndexPage {
 
     <button class="neutral" type="button" onclick="selectAll(true)">Alle Ordner</button>
     <button class="neutral" type="button" onclick="selectAll(false)">Keine Ordner</button>
-    <button class="danger"  type="button" onclick="submitDelete()">Ausgewählte Ordner löschen</button>
 
-    <!-- NEU: Bilder löschen -->
-    <button class="danger" type="button" onclick="submitDeleteImages()">Ausgewählte Bilder löschen</button>
+    <!-- GEÄNDERT: nur 1 Button "Löschen" -->
+    <button class="danger" type="button" onclick="submitDeleteAll()">Löschen</button>
   </div>
 
   $msgHtml
@@ -361,11 +366,6 @@ function Render-IndexPage {
     <div id="list" class="grid">
       $( $rows.ToString() )
     </div>
-  </form>
-
-  <!-- NEU: eigenes Form für Bilder -->
-  <form id="imgForm" method="post" action="/deleteimg">
-    <input type="hidden" name="confirm" value="0" />
   </form>
 
   <div id="viewer" onclick="closeViewer()">
@@ -408,32 +408,22 @@ function applyFilter(){
     card.style.display = path.includes(q) ? "" : "none";
   });
 }
-function submitDelete(){
-  const checked = Array.from(document.querySelectorAll("input[type=checkbox][name=folder]:checked")).length;
-  if(checked === 0){ alert("Keine Ordner ausgewählt."); return; }
-  const ok = confirm("Wirklich " + checked + " Ordner löschen? (Papierkorb/HardDelete je nach Modus)");
+
+// GEÄNDERT: 1x löschen (Ordner + Bilder)
+function submitDeleteAll(){
+  const folders = Array.from(document.querySelectorAll("input[type=checkbox][name=folder]:checked")).length;
+  const imgs = Array.from(document.querySelectorAll("input[type=checkbox].sel:checked")).length;
+
+  if(folders === 0 && imgs === 0){
+    alert("Nichts ausgewählt (keine Ordner und keine Bilder).");
+    return;
+  }
+
+  const ok = confirm("Wirklich löschen?\n\nOrdner: " + folders + "\nBilder: " + imgs + "\n\n(Papierkorb/HardDelete je nach Modus)");
   if(!ok) return;
+
   document.querySelector("#delForm input[name=confirm]").value = "1";
   document.getElementById("delForm").submit();
-}
-
-// NEU: Bilder löschen
-function submitDeleteImages(){
-  const imgs = Array.from(document.querySelectorAll("input[type=checkbox].sel:checked")).map(x => x.value);
-  if(imgs.length === 0){ alert("Keine Bilder ausgewählt."); return; }
-  const ok = confirm("Wirklich " + imgs.length + " Bilder löschen? (Papierkorb/HardDelete je nach Modus)");
-  if(!ok) return;
-
-  const form = document.getElementById("imgForm");
-  form.innerHTML = '<input type="hidden" name="confirm" value="1" />';
-  imgs.forEach(p => {
-    const i = document.createElement("input");
-    i.type = "hidden";
-    i.name = "img";
-    i.value = p;
-    form.appendChild(i);
-  });
-  form.submit();
 }
 
 // ganze Zeile klickbar, ohne Checkbox/Button zu triggern
@@ -449,7 +439,7 @@ function toggleFolderRow(ev, hdrEl){
   toggleFolder(btn);
 }
 
-// Entfernt viele <img>-Elemente in kleinen Batches, damit das Zuklappen nicht "einfriert"
+// Entfernt viele <img>-Elemente in kleinen Batches
 function unloadThumbs(container){
   const batchSize = 25;
   function step(){
@@ -528,7 +518,7 @@ document.getElementById("viewerImg").addEventListener("click", (e) => {
   else viewerNext();
 });
 
-// --- Preview: 10 zufällige Bilder pro Ordner (im zugeklappten Zustand sichtbar) ---
+// --- Preview: 10 zufällige Bilder pro Ordner ---
 function pickRandomUnique(arr, n){
   if (arr.length <= n) return arr.slice();
   const out = [];
@@ -542,9 +532,8 @@ function pickRandomUnique(arr, n){
   return out;
 }
 
-// NEU: Thumb Element bauen inkl. Checkbox (value=RelPath)
+// Thumb Element inkl. Checkbox (value=RelPath)
 function relFromImgUrl(src){
-  // src ist /img?path=<urlenc(rel)>
   const m = src.match(/\/img\?path=([^&]+)/i);
   if(!m) return "";
   try { return decodeURIComponent(m[1]); } catch { return ""; }
@@ -767,7 +756,6 @@ try {
           continue
         }
 
-        # Streaming statt ReadAllBytes (RAM-schonend)
         $ct = Get-ContentTypeByExt -Path $full
         $res.StatusCode = 200
         $res.ContentType = $ct
@@ -786,57 +774,7 @@ try {
         continue
       }
 
-      # -----------------------------
-      # NEU: Einzelbilder löschen
-      # -----------------------------
-      if ($path -eq "/deleteimg" -and $req.HttpMethod -eq "POST") {
-        $body = Read-RequestBody -Request $req
-        $form = Parse-FormUrlEncoded -Body $body
-
-        if (-not $form.ContainsKey("confirm") -or $form["confirm"] -ne "1") {
-          $html = Render-IndexPage -RootFull $RootFull -Folders $Folders -Msg "Bild-Löschen abgebrochen (keine Bestätigung)."
-          Send-ResponseHtml -Response $res -Html $html
-          continue
-        }
-
-        $selected = @()
-        if ($form.ContainsKey("img")) {
-          if ($form["img"] -is [System.Collections.IList]) { $selected = @($form["img"]) }
-          else { $selected = @($form["img"]) }
-        }
-
-        if ($selected.Count -eq 0) {
-          $html = Render-IndexPage -RootFull $RootFull -Folders $Folders -Msg "Keine Bilder ausgewählt."
-          Send-ResponseHtml -Response $res -Html $html
-          continue
-        }
-
-        $ok = 0
-        $fail = 0
-        $errors = @()
-
-        foreach ($relFile in $selected) {
-          try {
-            Delete-ImageFileSafe -RootFull $RootFull -RelFile $relFile -HardDelete:$HardDelete
-            $ok++
-          } catch {
-            $fail++
-            $errors += "E040 $relFile : $($_.Exception.Message)"
-          }
-        }
-
-        $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt
-
-        $msg = "Bilder gelöscht: OK=$ok | FAIL=$fail"
-        if ($errors.Count -gt 0) {
-          $msg += " | Fehler: " + ($errors -join " || ")
-        }
-
-        $html = Render-IndexPage -RootFull $RootFull -Folders $Folders -Msg $msg
-        Send-ResponseHtml -Response $res -Html $html
-        continue
-      }
-
+      # GEÄNDERT: /delete löscht Ordner + Bilder in einem Durchgang
       if ($path -eq "/delete" -and $req.HttpMethod -eq "POST") {
         $body = Read-RequestBody -Request $req
         $form = Parse-FormUrlEncoded -Body $body
@@ -847,35 +785,53 @@ try {
           continue
         }
 
-        $selected = @()
+        # Ordner
+        $selectedFolders = @()
         if ($form.ContainsKey("folder")) {
-          if ($form["folder"] -is [System.Collections.IList]) { $selected = @($form["folder"]) }
-          else { $selected = @($form["folder"]) }
+          if ($form["folder"] -is [System.Collections.IList]) { $selectedFolders = @($form["folder"]) }
+          else { $selectedFolders = @($form["folder"]) }
         }
 
-        if ($selected.Count -eq 0) {
-          $html = Render-IndexPage -RootFull $RootFull -Folders $Folders -Msg "Keine Ordner ausgewählt."
+        # Bilder
+        $selectedImages = @()
+        if ($form.ContainsKey("img")) {
+          if ($form["img"] -is [System.Collections.IList]) { $selectedImages = @($form["img"]) }
+          else { $selectedImages = @($form["img"]) }
+        }
+
+        if ($selectedFolders.Count -eq 0 -and $selectedImages.Count -eq 0) {
+          $html = Render-IndexPage -RootFull $RootFull -Folders $Folders -Msg "Nichts ausgewählt."
           Send-ResponseHtml -Response $res -Html $html
           continue
         }
 
-        $ok = 0
-        $fail = 0
+        $okF = 0; $failF = 0
+        $okI = 0; $failI = 0
         $errors = @()
 
-        foreach ($relFolder in $selected) {
+        foreach ($relFile in $selectedImages) {
+          try {
+            Delete-ImageFileSafe -RootFull $RootFull -RelFile $relFile -HardDelete:$HardDelete
+            $okI++
+          } catch {
+            $failI++
+            $errors += "E040 IMG $relFile : $($_.Exception.Message)"
+          }
+        }
+
+        foreach ($relFolder in $selectedFolders) {
           try {
             Delete-FolderSafe -RootFull $RootFull -RelFolder $relFolder -HardDelete:$HardDelete
-            $ok++
+            $okF++
           } catch {
-            $fail++
-            $errors += "E040 $relFolder : $($_.Exception.Message)"
+            $failF++
+            $errors += "E040 DIR $relFolder : $($_.Exception.Message)"
           }
         }
 
         $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt
 
-        $msg = "Gelöscht: OK=$ok | FAIL=$fail"
+        $msg = "Gelöscht: Ordner OK=$okF FAIL=$failF | Bilder OK=$okI FAIL=$failI"
         if ($errors.Count -gt 0) {
           $msg += " | Fehler: " + ($errors -join " || ")
         }
