@@ -7,7 +7,7 @@ ManifestHint:
   )
   Description     = "Index/Scan/Delete Helpers: sichere Pfade, ContentTypes, Folder-Scan, Delete (Papierkorb/HardDelete)."
   Category        = "Media"
-  Tags            = @("Index","Scan","Photos","RecycleBin","HardDelete","PathSafety")
+  Tags            = @("Index","Scan","Photos","Videos","RecycleBin","HardDelete","PathSafety")
   Dependencies    = @("Microsoft.VisualBasic")
 
 Zweck:
@@ -67,8 +67,27 @@ function Get-ContentTypeByExt {
     ".bmp"  { "image/bmp" }
     ".tif"  { "image/tiff" }
     ".tiff" { "image/tiff" }
+
+    # Video
+    ".mp4"  { "video/mp4" }
+    ".m4v"  { "video/mp4" }
+    ".webm" { "video/webm" }
+    ".ogv"  { "video/ogg" }
+    ".mov"  { "video/quicktime" }
+    ".mkv"  { "video/x-matroska" }
+    ".avi"  { "video/x-msvideo" }
+
     default { "application/octet-stream" }
   }
+}
+
+function Get-NaturalSortKey {
+  param([string]$Text)
+  # Zerlegt Text in Segmente: Zahlen werden als Long gepaddet, Text bleibt lowercase
+  [regex]::Replace($Text, '(\d+)', {
+    param($m)
+    $m.Value.PadLeft(20, '0')
+  }).ToLowerInvariant()
 }
 
 function Scan-ImageFolders {
@@ -87,7 +106,7 @@ function Scan-ImageFolders {
     try {
       $imgs = Get-ChildItem -LiteralPath $d.FullName -File -Force -ErrorAction SilentlyContinue |
         Where-Object { $ImageExt -contains $_.Extension.ToLowerInvariant() } |
-        Sort-Object Name
+        Sort-Object { Get-NaturalSortKey $_.Name }
 
       if ($imgs.Count -gt 0) {
         $folders += [pscustomobject]@{
@@ -102,7 +121,7 @@ function Scan-ImageFolders {
     }
   }
 
-  return $folders | Sort-Object RelPath
+  return $folders | Sort-Object { Get-NaturalSortKey $_.RelPath }
 }
 
 function Delete-FolderSafe {
