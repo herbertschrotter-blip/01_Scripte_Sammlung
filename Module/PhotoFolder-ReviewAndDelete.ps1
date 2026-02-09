@@ -526,6 +526,7 @@ function Render-IndexPage {
       <button type="button" onclick="setThumbSize('l')">L</button>
     </div>
 
+    <button class="neutral" type="button" onclick="submitMove()">Verschieben</button>
     <button class="danger"  type="button" onclick="submitDelete()">Löschen</button>
     <button class="closeBtn" title="Beenden" onclick="shutdown()">✕</button>
   </div>
@@ -883,6 +884,50 @@ function changeRoot(){
     .then(r => { if(r.ok) window.location.reload(); })
     .catch(e => alert("Fehler: " + e));
 }
+
+function submitMove(){
+  const folders = Array.from(document.querySelectorAll("input[type=checkbox][name=folder]:checked"));
+  const imgs = Array.from(document.querySelectorAll(".imgCb:checked"));
+
+  if(folders.length === 0 && imgs.length === 0){
+    alert("Nichts ausgewählt.");
+    return;
+  }
+
+  let desc = "";
+  if(folders.length > 0) desc += folders.length + " Ordner";
+  if(folders.length > 0 && imgs.length > 0) desc += " und ";
+  if(imgs.length > 0) desc += imgs.length + " Bilder";
+
+  if(!confirm(desc + " verschieben? (Zielordner wird im nächsten Schritt gewählt)")) return;
+
+  const overlay = document.getElementById("loadOverlay");
+  const loadMsg = document.getElementById("loadMsg");
+  overlay.classList.add("active");
+  loadMsg.textContent = "Zielordner wählen…";
+
+  const params = new URLSearchParams();
+  folders.forEach(cb => params.append("folder", cb.value));
+  imgs.forEach(cb => params.append("img", cb.dataset.rel));
+
+  fetch("/move", {
+    method: "POST",
+    headers: {"Content-Type": "application/x-www-form-urlencoded"},
+    body: params.toString()
+  })
+  .then(r => r.json())
+  .then(data => {
+    overlay.classList.remove("active");
+    if(data.cancelled){
+      return;
+    }
+    window.location.reload();
+  })
+  .catch(err => {
+    overlay.classList.remove("active");
+    alert("Fehler: " + err);
+  });
+}
 </script>
 </body>
 </html>
@@ -1004,6 +1049,134 @@ try {
           $fs.Close()
           $res.OutputStream.Close()
         }
+        continue
+      }
+
+      if ($path -eq "/move" -and $req.HttpMethod -eq "POST") {
+        $body = Read-RequestBody -Request $req
+        $form = Parse-FormUrlEncoded -Body $body
+
+        # Ordner + Bilder sammeln
+        $selectedFolders = @()
+        if ($form.ContainsKey("folder")) {
+          if ($form["folder"] -is [System.Collections.IList]) { $selectedFolders = @($form["folder"]) }
+          else { $selectedFolders = @($form["folder"]) }
+        }
+        $selectedImgs = @()
+        if ($form.ContainsKey("img")) {
+          if ($form["img"] -is [System.Collections.IList]) { $selectedImgs = @($form["img"]) }
+          else { $selectedImgs = @($form["img"]) }
+        }
+
+        if ($selectedFolders.Count -eq 0 -and $selectedImgs.Count -eq 0) {
+          Send-ResponseText -Response $res -Text '{"error":"Nichts ausgewählt"}' -StatusCode 400 -ContentType "application/json; charset=utf-8"
+          continue
+        }
+
+        # Zielordner per Dialog wählen (im Vordergrund)
+        $dlgMove = New-Object System.Windows.Forms.FolderBrowserDialog
+        $dlgMove.Description = "Zielordner für Verschieben auswählen"
+        $dlgMove.ShowNewFolderButton = $true
+
+        $owner = New-Object System.Windows.Forms.Form
+        $owner.TopMost = $true
+        $owner.StartPosition = "Manual"
+        $owner.Location = New-Object System.Drawing.Point(-9999,-9999)
+        $owner.Size = New-Object System.Drawing.Size(1,1)
+        $owner.Show()
+        $owner.BringToFront()
+
+        $result = $dlgMove.ShowDialog($owner)
+        $owner.Close()
+        $owner.Dispose()
+
+        if ($result -ne [System.Windows.Forms.DialogResult]::OK -or
+            [string]::IsNullOrWhiteSpace($dlgMove.SelectedPath)) {
+          $json = @{ cancelled = $true; msg = "Abgebrochen" } | ConvertTo-Json -Compress
+          Send-ResponseText -Response $res -Text $json -StatusCode 200 -ContentType "application/json; charset=utf-8"
+          continue
+        }
+
+        $destDir = $dlgMove.SelectedPath
+        if (-not (Test-Path -LiteralPath $destDir -PathType Container)) {
+          $json = @{ error = "Zielordner existiert nicht" } | ConvertTo-Json -Compress
+          Send-ResponseText -Response $res -Text $json -StatusCode 400 -ContentType "application/json; charset=utf-8"
+          continue
+        }
+
+        $ok = 0
+        $fail = 0
+        $errors = @()
+
+        # Ordner verschieben
+        foreach ($relFolder in $selectedFolders) {
+          try {
+            $srcFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $relFolder
+            if (Test-Path -LiteralPath $srcFull -PathType Container) {
+              $folderName = Split-Path -Leaf $srcFull
+              $destPath = Join-Path $destDir $folderName
+
+              # Bei Namenskollision umbenennen
+              if (Test-Path -LiteralPath $destPath) {
+                $i = 1
+                do {
+                  $destPath = Join-Path $destDir ("{0}__{1}" -f $folderName, $i)
+                  $i++
+                } while (Test-Path -LiteralPath $destPath)
+              }
+
+              Move-Item -LiteralPath $srcFull -Destination $destPath -Force
+              $ok++
+            } else {
+              $fail++
+              $errors += "E050 Ordner nicht gefunden: $relFolder"
+            }
+          } catch {
+            $fail++
+            $errors += "E050 $relFolder : $($_.Exception.Message)"
+          }
+        }
+
+        # Bilder verschieben
+        foreach ($relImg in $selectedImgs) {
+          try {
+            $imgFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $relImg
+            if (Test-Path -LiteralPath $imgFull -PathType Leaf) {
+              $fileName = Split-Path -Leaf $imgFull
+              $destPath = Join-Path $destDir $fileName
+
+              # Bei Namenskollision umbenennen
+              if (Test-Path -LiteralPath $destPath) {
+                $baseName = [IO.Path]::GetFileNameWithoutExtension($fileName)
+                $ext = [IO.Path]::GetExtension($fileName)
+                $i = 1
+                do {
+                  $destPath = Join-Path $destDir ("{0}__{1}{2}" -f $baseName, $i, $ext)
+                  $i++
+                } while (Test-Path -LiteralPath $destPath)
+              }
+
+              Move-Item -LiteralPath $imgFull -Destination $destPath -Force
+              $ok++
+            } else {
+              $fail++
+              $errors += "E050 Bild nicht gefunden: $relImg"
+            }
+          } catch {
+            $fail++
+            $errors += "E050 $relImg : $($_.Exception.Message)"
+          }
+        }
+
+        $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt
+
+        $msg = "Verschoben: OK=$ok | FAIL=$fail"
+        if ($errors.Count -gt 0) {
+          $msg += " | Fehler: " + ($errors -join " || ")
+        }
+
+        $json = @{ ok = $ok; fail = $fail; msg = $msg } | ConvertTo-Json -Compress
+        Send-ResponseText -Response $res -Text $json -StatusCode 200 -ContentType "application/json; charset=utf-8"
         continue
       }
 
