@@ -781,6 +781,7 @@ function closeViewer(){
   img.src = "";
 }
 
+<<<<<<< HEAD
 function urlToRel(src){
   // /img?path=ENCODED -> decoded rel path
   try {
@@ -857,6 +858,8 @@ function viewerDelete(){
   });
 }
 
+=======
+>>>>>>> bbab6df204c0c122f6a5afea06b6813b84458226
 // Klick links/rechts im Bild -> prev/next
 document.getElementById("viewerImg").addEventListener("click", (e) => {
   const rect = e.target.getBoundingClientRect();
@@ -979,12 +982,19 @@ function handleImgClick(ev, wrap){
   setFocus(wrap);
 }
 
+<<<<<<< HEAD
 function createImgWrap(src, rel, folderKey, idx, isPreview){
+=======
+function createImgWrap(src, rel, folderKey, idx){
+>>>>>>> bbab6df204c0c122f6a5afea06b6813b84458226
   const wrap = document.createElement("div");
   wrap.className = "imgWrap";
   wrap.dataset.folderKey = folderKey;
   wrap.dataset.idx = idx;
+<<<<<<< HEAD
   if(isPreview) wrap.dataset.preview = "1";
+=======
+>>>>>>> bbab6df204c0c122f6a5afea06b6813b84458226
 
   const cb = document.createElement("input");
   cb.type = "checkbox";
@@ -1034,7 +1044,10 @@ document.addEventListener("keydown", (e) => {
     if(e.key === "Escape") closeViewer();
     if(e.key === "ArrowLeft") viewerPrev();
     if(e.key === "ArrowRight") viewerNext();
+<<<<<<< HEAD
     if(e.key === "Delete") viewerDelete();
+=======
+>>>>>>> bbab6df204c0c122f6a5afea06b6813b84458226
     return;
   }
 
@@ -1080,6 +1093,7 @@ document.addEventListener("keydown", (e) => {
     // Enter: Viewer öffnen für fokussiertes Bild
     e.preventDefault();
     const folderKey = cur.dataset.folderKey;
+<<<<<<< HEAD
     const img = cur.querySelector("img.t");
     const src = img ? img.src : "";
     if(cur.dataset.preview === "1"){
@@ -1090,6 +1104,10 @@ document.addEventListener("keydown", (e) => {
       const idx = parseInt(cur.dataset.idx, 10);
       openViewerBy(folderKey, idx);
     }
+=======
+    const idx = parseInt(cur.dataset.idx, 10);
+    openViewerBy(folderKey, idx);
+>>>>>>> bbab6df204c0c122f6a5afea06b6813b84458226
     return;
   }
 
