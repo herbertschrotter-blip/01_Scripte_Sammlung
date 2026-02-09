@@ -108,6 +108,7 @@ function Render-IndexPage {
 
     # Für Preview + Vollansicht werden URLs als Liste abgelegt (On-Demand)
     $imgList = ($f.ImagesRel | ForEach-Object { "/img?path=$(UrlEncode($_))" }) -join "|"
+    $imgRelList = ($f.ImagesRel) -join "|"
 
     [void]$rows.AppendLine(@"
 <div class="card" data-path="$(HtmlEncode($rel))">
@@ -119,10 +120,10 @@ function Render-IndexPage {
   </div>
 
   <!-- Zugeklappt: 10 zufällige Preview-Thumbs -->
-  <div class="previewRow" data-preview-loaded="0" data-images="$(HtmlEncode($imgList))"></div>
+  <div class="previewRow" data-preview-loaded="0" data-images="$(HtmlEncode($imgList))" data-images-rel="$(HtmlEncode($imgRelList))"></div>
 
   <!-- Aufgeklappt: alle Bilder (on-demand) -->
-  <div class="thumbs isCollapsed" data-loaded="0" data-images="$(HtmlEncode($imgList))"></div>
+  <div class="thumbs isCollapsed" data-loaded="0" data-images="$(HtmlEncode($imgList))" data-images-rel="$(HtmlEncode($imgRelList))"></div>
 </div>
 "@)
   }
@@ -245,6 +246,33 @@ function Render-IndexPage {
   img.t:hover{
     transform:scale(1.04);
     box-shadow:0 4px 16px rgba(0,0,0,.12);
+  }
+
+  /* --- Selektierbare Bilder --- */
+  .imgWrap{
+    position:relative;
+    display:inline-block;
+  }
+  .imgWrap .imgCb{
+    position:absolute;
+    top:6px;
+    left:6px;
+    width:20px;
+    height:20px;
+    accent-color:var(--c-danger);
+    cursor:pointer;
+    z-index:2;
+    opacity:0;
+    transition:opacity var(--transition);
+  }
+  .imgWrap:hover .imgCb,
+  .imgWrap .imgCb:checked{
+    opacity:1;
+  }
+  .imgWrap.selected img.t{
+    outline:3px solid var(--c-danger);
+    outline-offset:-3px;
+    opacity:.75;
   }
 
   /* --- Inputs --- */
@@ -419,6 +447,7 @@ function Render-IndexPage {
       <div><b>Root:</b> $(HtmlEncode($RootFull))</div>
       <div class="hint"><b>Löschmodus:</b> $hardInfo</div>
     </div>
+    <button class="neutral" type="button" onclick="changeRoot()" title="Anderen Root-Ordner wählen">📂 Ordner wählen</button>
 
     <div style="flex:1"></div>
 
@@ -432,7 +461,7 @@ function Render-IndexPage {
 
     <button class="neutral" type="button" onclick="selectAll(true)">Alle</button>
     <button class="neutral" type="button" onclick="selectAll(false)">Keine</button>
-    <button class="danger"  type="button" onclick="submitDelete()">Ausgewählte löschen</button>
+    <button class="danger"  type="button" onclick="submitDelete()">Löschen</button>
     <button class="closeBtn" title="Beenden" onclick="shutdown()">✕</button>
   </div>
 
@@ -470,6 +499,10 @@ function setThumbSize(mode){
 
 function selectAll(state){
   document.querySelectorAll("input[type=checkbox][name=folder]").forEach(cb => cb.checked = state);
+  document.querySelectorAll(".imgCb").forEach(cb => {
+    cb.checked = state;
+    cb.closest(".imgWrap").classList.toggle("selected", state);
+  });
 }
 function applyFilter(){
   const q = document.getElementById("filter").value.toLowerCase();
@@ -479,12 +512,38 @@ function applyFilter(){
   });
 }
 function submitDelete(){
-  const checked = Array.from(document.querySelectorAll("input[type=checkbox][name=folder]:checked")).length;
-  if(checked === 0){ alert("Keine Ordner ausgewählt."); return; }
-  const ok = confirm("Wirklich " + checked + " Ordner löschen? (Papierkorb/HardDelete je nach Modus)");
-  if(!ok) return;
-  document.querySelector("#delForm input[name=confirm]").value = "1";
-  document.getElementById("delForm").submit();
+  const folders = Array.from(document.querySelectorAll("input[type=checkbox][name=folder]:checked"));
+  const imgs = Array.from(document.querySelectorAll(".imgCb:checked"));
+
+  if(folders.length === 0 && imgs.length === 0){
+    alert("Nichts ausgewählt.");
+    return;
+  }
+
+  let msg = "";
+  if(folders.length > 0) msg += folders.length + " Ordner";
+  if(folders.length > 0 && imgs.length > 0) msg += " und ";
+  if(imgs.length > 0) msg += imgs.length + " Bilder";
+  msg += " löschen?";
+
+  if(!confirm(msg)) return;
+
+  // Hidden inputs für Bilder ins Formular einfügen
+  const form = document.getElementById("delForm");
+
+  // Alte img-Inputs entfernen
+  form.querySelectorAll("input[name=img]").forEach(el => el.remove());
+
+  imgs.forEach(cb => {
+    const hidden = document.createElement("input");
+    hidden.type = "hidden";
+    hidden.name = "img";
+    hidden.value = cb.dataset.rel;
+    form.appendChild(hidden);
+  });
+
+  form.querySelector("input[name=confirm]").value = "1";
+  form.submit();
 }
 
 // ganze Zeile klickbar, ohne Checkbox/Button zu triggern
@@ -599,6 +658,7 @@ function ensurePreview(card){
 
   const data = preview.dataset.images || "";
   const urls = data.split("|").filter(Boolean);
+  const rels = (preview.dataset.imagesRel || "").split("|").filter(Boolean);
   if (!urls.length){
     preview.dataset.previewLoaded = "1";
     return;
@@ -606,31 +666,52 @@ function ensurePreview(card){
 
   const folderKey = card.getAttribute("data-path");
 
-  // Wichtig: Viewer soll auch im Preview durch alle Bilder blättern können
-  // -> Gesamt-URL-Liste bereits hier merken
   if (!window.folderImages[folderKey] || window.folderImages[folderKey].length === 0) {
     window.folderImages[folderKey] = urls;
   }
 
-  const sample = pickRandomUnique(urls, 10);
+  const sample = pickRandomUnique(Array.from(urls.keys()), 10);
 
   const frag = document.createDocumentFragment();
-  sample.forEach((src) => {
-    const img = document.createElement("img");
-    img.className = "t";
-    img.loading = "lazy";
-    img.src = src;
-    img.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      const all = window.folderImages[folderKey] || urls;
-      const idx = all.indexOf(src);
-      openViewerBy(folderKey, idx >= 0 ? idx : 0);
-    });
-    frag.appendChild(img);
+  sample.forEach((idx) => {
+    const src = urls[idx];
+    const rel = rels[idx] || "";
+    const wrap = createImgWrap(src, rel, folderKey, idx);
+    frag.appendChild(wrap);
   });
 
   preview.appendChild(frag);
   preview.dataset.previewLoaded = "1";
+}
+
+function createImgWrap(src, rel, folderKey, idx){
+  const wrap = document.createElement("div");
+  wrap.className = "imgWrap";
+
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.className = "imgCb";
+  cb.dataset.rel = rel;
+  cb.addEventListener("change", (ev) => {
+    ev.stopPropagation();
+    wrap.classList.toggle("selected", cb.checked);
+  });
+  cb.addEventListener("click", (ev) => ev.stopPropagation());
+
+  const img = document.createElement("img");
+  img.className = "t";
+  img.loading = "lazy";
+  img.src = src;
+  img.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    const all = window.folderImages[folderKey] || [src];
+    const i = all.indexOf(src);
+    openViewerBy(folderKey, i >= 0 ? i : 0);
+  });
+
+  wrap.appendChild(cb);
+  wrap.appendChild(img);
+  return wrap;
 }
 
 function initPreviews(){
@@ -677,22 +758,16 @@ function toggleFolder(btn){
 
   const data = thumbs.dataset.images || "";
   const urls = data.split("|").filter(Boolean);
+  const rels = (thumbs.dataset.imagesRel || "").split("|").filter(Boolean);
   const folderKey = card.getAttribute("data-path");
 
-  // Für Viewer Navigation immer Gesamt-Liste setzen
   window.folderImages[folderKey] = urls;
 
   const frag = document.createDocumentFragment();
   urls.forEach((src, i) => {
-    const img = document.createElement("img");
-    img.className = "t";
-    img.loading = "lazy";
-    img.src = src;
-    img.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      openViewerBy(folderKey, i);
-    });
-    frag.appendChild(img);
+    const rel = rels[i] || "";
+    const wrap = createImgWrap(src, rel, folderKey, i);
+    frag.appendChild(wrap);
   });
 
   thumbs.appendChild(frag);
@@ -704,6 +779,12 @@ function shutdown(){
   fetch("/shutdown", { method:"POST" })
     .then(() => window.close())
     .catch(() => window.close());
+}
+
+function changeRoot(){
+  fetch("/changeroot", { method:"POST" })
+    .then(r => { if(r.ok) window.location.reload(); })
+    .catch(e => alert("Fehler: " + e));
 }
 </script>
 </body>
@@ -759,6 +840,37 @@ try {
         break
       }
 
+      if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
+        $dlgRoot = New-Object System.Windows.Forms.FolderBrowserDialog
+        $dlgRoot.Description = "Neuen Root-Ordner auswählen"
+        $dlgRoot.ShowNewFolderButton = $false
+
+        # Dummy-Form als Owner, damit der Dialog im Vordergrund erscheint
+        $owner = New-Object System.Windows.Forms.Form
+        $owner.TopMost = $true
+        $owner.StartPosition = "Manual"
+        $owner.Location = New-Object System.Drawing.Point(-9999,-9999)
+        $owner.Size = New-Object System.Drawing.Size(1,1)
+        $owner.Show()
+        $owner.BringToFront()
+
+        $result = $dlgRoot.ShowDialog($owner)
+        $owner.Close()
+        $owner.Dispose()
+
+        if ($result -eq [System.Windows.Forms.DialogResult]::OK -and
+            -not [string]::IsNullOrWhiteSpace($dlgRoot.SelectedPath) -and
+            (Test-Path -LiteralPath $dlgRoot.SelectedPath -PathType Container)) {
+
+          $RootFull = [System.IO.Path]::GetFullPath($dlgRoot.SelectedPath)
+          $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt
+          Write-Host ("[INFO] Root gewechselt: {0}" -f $RootFull)
+        }
+
+        Send-ResponseText -Response $res -Text "OK" -StatusCode 200
+        continue
+      }
+
       if ($path -eq "/img" -and $req.HttpMethod -eq "GET") {
         $q = $req.QueryString["path"]
         if ([string]::IsNullOrWhiteSpace($q)) {
@@ -808,14 +920,22 @@ try {
           continue
         }
 
-        $selected = @()
+        # Ordner sammeln
+        $selectedFolders = @()
         if ($form.ContainsKey("folder")) {
-          if ($form["folder"] -is [System.Collections.IList]) { $selected = @($form["folder"]) }
-          else { $selected = @($form["folder"]) }
+          if ($form["folder"] -is [System.Collections.IList]) { $selectedFolders = @($form["folder"]) }
+          else { $selectedFolders = @($form["folder"]) }
         }
 
-        if ($selected.Count -eq 0) {
-          $html = Render-IndexPage -RootFull $RootFull -Folders $Folders -Msg "Keine Ordner ausgewählt."
+        # Bilder sammeln
+        $selectedImgs = @()
+        if ($form.ContainsKey("img")) {
+          if ($form["img"] -is [System.Collections.IList]) { $selectedImgs = @($form["img"]) }
+          else { $selectedImgs = @($form["img"]) }
+        }
+
+        if ($selectedFolders.Count -eq 0 -and $selectedImgs.Count -eq 0) {
+          $html = Render-IndexPage -RootFull $RootFull -Folders $Folders -Msg "Nichts ausgewählt."
           Send-ResponseHtml -Response $res -Html $html
           continue
         }
@@ -824,13 +944,40 @@ try {
         $fail = 0
         $errors = @()
 
-        foreach ($relFolder in $selected) {
+        # Ordner löschen
+        foreach ($relFolder in $selectedFolders) {
           try {
             Delete-FolderSafe -RootFull $RootFull -RelFolder $relFolder -HardDelete:$HardDelete
             $ok++
           } catch {
             $fail++
             $errors += "E040 $relFolder : $($_.Exception.Message)"
+          }
+        }
+
+        # Bilder löschen
+        foreach ($relImg in $selectedImgs) {
+          try {
+            $imgFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $relImg
+            if (Test-Path -LiteralPath $imgFull -PathType Leaf) {
+              if ($HardDelete) {
+                Remove-Item -LiteralPath $imgFull -Force
+              } else {
+                Add-Type -AssemblyName Microsoft.VisualBasic | Out-Null
+                [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
+                  $imgFull,
+                  [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+                  [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
+                )
+              }
+              $ok++
+            } else {
+              $fail++
+              $errors += "E040 Bild nicht gefunden: $relImg"
+            }
+          } catch {
+            $fail++
+            $errors += "E040 $relImg : $($_.Exception.Message)"
           }
         }
 
