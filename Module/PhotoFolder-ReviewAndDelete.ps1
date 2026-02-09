@@ -452,8 +452,15 @@ function Render-IndexPage {
   }
   .filterActions{
     display:flex;
-    gap:6px;
+    gap:0;
     align-items:center;
+  }
+  .filterActions .sizeGroup{
+    display:flex;
+    width:100%;
+  }
+  .filterActions .sizeGroup button{
+    flex:1;
   }
 </style>
 </head>
