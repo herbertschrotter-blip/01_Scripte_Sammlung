@@ -277,6 +277,11 @@ function Render-IndexPage {
     outline-offset:-3px;
     opacity:.75;
   }
+  .imgWrap.focused{
+    outline:2px solid var(--c-accent);
+    outline-offset:2px;
+    border-radius:var(--radius-sm);
+  }
 
   /* --- Inputs --- */
   input[type=text]{
@@ -407,6 +412,28 @@ function Render-IndexPage {
   }
   #viewerX:hover{background:var(--c-danger-hover);}
   #viewerX:active{transform:scale(.9);}
+
+  #viewerDel{
+    position:fixed;
+    top:20px;
+    left:20px;
+    width:44px;
+    height:44px;
+    border-radius:50%;
+    border:0;
+    background:var(--c-danger);
+    color:#fff;
+    font-size:20px;
+    cursor:pointer;
+    box-shadow:0 2px 8px rgba(0,0,0,.3);
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    transition:background var(--transition), transform 100ms ease;
+    z-index:10000;
+  }
+  #viewerDel:hover{background:var(--c-danger-hover);}
+  #viewerDel:active{transform:scale(.9);}
 
   #viewerBar{margin-top:12px; text-align:center;}
   #viewerOpen{
@@ -542,6 +569,7 @@ function Render-IndexPage {
   </form>
 
   <div id="viewer" onclick="closeViewer()">
+    <button id="viewerDel" type="button" onclick="event.stopPropagation(); viewerDelete()" title="Bild löschen">🗑️</button>
     <div id="viewerInner" onclick="event.stopPropagation()">
       <button id="viewerX" type="button" onclick="closeViewer()">X</button>
       <img id="viewerImg" src="" title="Links klicken = zurück | Rechts klicken = vorwärts" />
@@ -681,6 +709,10 @@ window.viewerState = { folderKey:null, urls:[], idx:0 };
 
 function openViewerBy(folderKey, idx){
   const urls = window.folderImages[folderKey] || [];
+  openViewerWith(folderKey, urls, idx);
+}
+
+function openViewerWith(folderKey, urls, idx){
   if (!urls.length) return;
 
   window.viewerState.folderKey = folderKey;
@@ -696,20 +728,50 @@ function openViewerBy(folderKey, idx){
   img.src = src;
   a.href = src;
   v.style.display = "flex";
+
+  // Nachbarn preloaden (je 5 vor und zurück)
+  preloadAround(urls, window.viewerState.idx, 5);
+}
+
+// Preload-Cache um doppelte Requests zu vermeiden
+window._preloaded = window._preloaded || new Set();
+
+function preloadAround(urls, center, range){
+  for(let offset = 1; offset <= range; offset++){
+    const fwd = (center + offset) % urls.length;
+    const bwd = (center - offset + urls.length) % urls.length;
+    preloadOne(urls[fwd]);
+    preloadOne(urls[bwd]);
+  }
+}
+
+function preloadOne(src){
+  if(!src || window._preloaded.has(src)) return;
+  window._preloaded.add(src);
+  const img = new Image();
+  img.src = src;
 }
 
 function viewerPrev(){
   const st = window.viewerState;
   if (!st.urls.length) return;
   st.idx = (st.idx - 1 + st.urls.length) % st.urls.length;
-  openViewerBy(st.folderKey, st.idx);
+  const img = document.getElementById("viewerImg");
+  const a = document.getElementById("viewerOpen");
+  img.src = st.urls[st.idx];
+  a.href = st.urls[st.idx];
+  preloadAround(st.urls, st.idx, 3);
 }
 
 function viewerNext(){
   const st = window.viewerState;
   if (!st.urls.length) return;
   st.idx = (st.idx + 1) % st.urls.length;
-  openViewerBy(st.folderKey, st.idx);
+  const img = document.getElementById("viewerImg");
+  const a = document.getElementById("viewerOpen");
+  img.src = st.urls[st.idx];
+  a.href = st.urls[st.idx];
+  preloadAround(st.urls, st.idx, 3);
 }
 
 function closeViewer(){
@@ -719,15 +781,81 @@ function closeViewer(){
   img.src = "";
 }
 
-// Tastatursteuerung (nur wenn Viewer offen)
-document.addEventListener("keydown", (e) => {
-  const v = document.getElementById("viewer");
-  if (v.style.display !== "flex") return;
+function urlToRel(src){
+  // /img?path=ENCODED -> decoded rel path
+  try {
+    const u = new URL(src, location.origin);
+    return u.searchParams.get("path") || "";
+  } catch(e){ return ""; }
+}
 
-  if(e.key === "Escape") closeViewer();
-  if(e.key === "ArrowLeft") viewerPrev();
-  if(e.key === "ArrowRight") viewerNext();
-});
+function viewerDelete(){
+  const st = window.viewerState;
+  if(!st.urls.length) return;
+
+  const src = st.urls[st.idx];
+  const rel = urlToRel(src);
+  if(!rel) return;
+
+  const params = new URLSearchParams();
+  params.append("confirm", "1");
+  params.append("img", rel);
+
+  // Server-Request (async, fire-and-forget)
+  fetch("/delete", {
+    method: "POST",
+    headers: {"Content-Type": "application/x-www-form-urlencoded"},
+    body: params.toString()
+  }).catch(() => {});
+
+  // Bild aus viewerState entfernen
+  st.urls.splice(st.idx, 1);
+
+  // Auch aus folderImages
+  if(window.folderImages[st.folderKey]){
+    const fi = window.folderImages[st.folderKey];
+    const fiIdx = fi.indexOf(src);
+    if(fiIdx >= 0) fi.splice(fiIdx, 1);
+  }
+
+  // Thumbnail aus DOM entfernen
+  document.querySelectorAll(".imgCb").forEach(cb => {
+    if(cb.dataset.rel === rel){
+      const w = cb.closest(".imgWrap");
+      if(w) w.remove();
+    }
+  });
+
+  // Zähler aktualisieren
+  document.querySelectorAll(".card").forEach(card => {
+    if(card.getAttribute("data-path") === st.folderKey){
+      const meta = card.querySelector(".meta");
+      if(meta){
+        const cnt = (window.folderImages[st.folderKey] || []).length;
+        meta.textContent = "(" + cnt + ")";
+      }
+    }
+  });
+
+  // Keine Bilder mehr -> Viewer schließen
+  if(!st.urls.length){
+    closeViewer();
+    return;
+  }
+
+  // Index korrigieren
+  if(st.idx >= st.urls.length) st.idx = 0;
+
+  // Bild forciert neu laden (Cache umgehen)
+  const viewerImg = document.getElementById("viewerImg");
+  const viewerOpen = document.getElementById("viewerOpen");
+  const newSrc = st.urls[st.idx];
+  viewerImg.src = "";
+  requestAnimationFrame(() => {
+    viewerImg.src = newSrc;
+    viewerOpen.href = newSrc;
+  });
+}
 
 // Klick links/rechts im Bild -> prev/next
 document.getElementById("viewerImg").addEventListener("click", (e) => {
@@ -765,17 +893,23 @@ function ensurePreview(card){
 
   const folderKey = card.getAttribute("data-path");
 
+  // Alle URLs merken (für aufgeklappte Ansicht)
   if (!window.folderImages[folderKey] || window.folderImages[folderKey].length === 0) {
     window.folderImages[folderKey] = urls;
   }
 
-  const sample = pickRandomUnique(Array.from(urls.keys()), 10);
+  const sampleIdxs = pickRandomUnique(Array.from(urls.keys()), 10);
+  const previewUrls = sampleIdxs.map(i => urls[i]);
+
+  // Preview-URLs separat speichern für Viewer im zugeklappten Zustand
+  window.previewImages = window.previewImages || {};
+  window.previewImages[folderKey] = previewUrls;
 
   const frag = document.createDocumentFragment();
-  sample.forEach((idx) => {
+  sampleIdxs.forEach((idx) => {
     const src = urls[idx];
     const rel = rels[idx] || "";
-    const wrap = createImgWrap(src, rel, folderKey, idx);
+    const wrap = createImgWrap(src, rel, folderKey, idx, true);
     frag.appendChild(wrap);
   });
 
@@ -783,9 +917,74 @@ function ensurePreview(card){
   preview.dataset.previewLoaded = "1";
 }
 
-function createImgWrap(src, rel, folderKey, idx){
+// --- Selection State ---
+window.selState = { lastClicked: null, focused: null };
+
+function getAllWraps(){
+  return Array.from(document.querySelectorAll(".imgWrap"));
+}
+
+function getVisibleWraps(){
+  return getAllWraps().filter(w => {
+    const card = w.closest(".card");
+    if(!card || card.style.display === "none") return false;
+    const container = w.closest(".thumbs, .previewRow");
+    if(!container) return false;
+    return !container.classList.contains("isCollapsed") && !container.classList.contains("isHidden");
+  });
+}
+
+function setWrapSelected(wrap, state){
+  const cb = wrap.querySelector(".imgCb");
+  if(cb) cb.checked = state;
+  wrap.classList.toggle("selected", state);
+}
+
+function setFocus(wrap){
+  const old = window.selState.focused;
+  if(old) old.classList.remove("focused");
+  if(wrap){
+    wrap.classList.add("focused");
+    wrap.scrollIntoView({block:"nearest",behavior:"smooth"});
+  }
+  window.selState.focused = wrap;
+}
+
+function handleImgClick(ev, wrap){
+  ev.stopPropagation();
+  const wraps = getVisibleWraps();
+  const idx = wraps.indexOf(wrap);
+
+  if(ev.shiftKey && window.selState.lastClicked !== null){
+    // Shift+Klick: Bereich auswählen
+    const lastIdx = wraps.indexOf(window.selState.lastClicked);
+    if(lastIdx >= 0){
+      const from = Math.min(lastIdx, idx);
+      const to = Math.max(lastIdx, idx);
+      for(let i = from; i <= to; i++){
+        setWrapSelected(wraps[i], true);
+      }
+    }
+  } else if(ev.ctrlKey || ev.metaKey){
+    // Strg+Klick: Einzeln umschalten
+    const cb = wrap.querySelector(".imgCb");
+    setWrapSelected(wrap, !cb.checked);
+  } else {
+    // Normaler Klick: nur dieses auswählen, Rest abwählen
+    wraps.forEach(w => setWrapSelected(w, false));
+    setWrapSelected(wrap, true);
+  }
+
+  window.selState.lastClicked = wrap;
+  setFocus(wrap);
+}
+
+function createImgWrap(src, rel, folderKey, idx, isPreview){
   const wrap = document.createElement("div");
   wrap.className = "imgWrap";
+  wrap.dataset.folderKey = folderKey;
+  wrap.dataset.idx = idx;
+  if(isPreview) wrap.dataset.preview = "1";
 
   const cb = document.createElement("input");
   cb.type = "checkbox";
@@ -801,17 +1000,106 @@ function createImgWrap(src, rel, folderKey, idx){
   img.className = "t";
   img.loading = "lazy";
   img.src = src;
+
+  // Einfach-Klick = Selektion
   img.addEventListener("click", (ev) => {
+    handleImgClick(ev, wrap);
+  });
+
+  // Doppelklick = Viewer
+  img.addEventListener("dblclick", (ev) => {
     ev.stopPropagation();
-    const all = window.folderImages[folderKey] || [src];
-    const i = all.indexOf(src);
-    openViewerBy(folderKey, i >= 0 ? i : 0);
+    if(isPreview){
+      // Im Preview: nur durch die geladenen Preview-Bilder blättern
+      const pUrls = (window.previewImages || {})[folderKey] || [];
+      const pIdx = pUrls.indexOf(src);
+      openViewerWith(folderKey, pUrls, pIdx >= 0 ? pIdx : 0);
+    } else {
+      const all = window.folderImages[folderKey] || [src];
+      const i = all.indexOf(src);
+      openViewerBy(folderKey, i >= 0 ? i : 0);
+    }
   });
 
   wrap.appendChild(cb);
   wrap.appendChild(img);
   return wrap;
 }
+
+// --- Keyboard: Pfeiltasten, Shift+Pfeiltasten, Leertaste, Enter ---
+document.addEventListener("keydown", (e) => {
+  // Viewer offen -> nur Viewer-Steuerung
+  const viewer = document.getElementById("viewer");
+  if(viewer.style.display === "flex"){
+    if(e.key === "Escape") closeViewer();
+    if(e.key === "ArrowLeft") viewerPrev();
+    if(e.key === "ArrowRight") viewerNext();
+    if(e.key === "Delete") viewerDelete();
+    return;
+  }
+
+  // Filter-Input hat Fokus -> nicht eingreifen
+  if(document.activeElement && document.activeElement.tagName === "INPUT") return;
+
+  const wraps = getVisibleWraps();
+  if(!wraps.length) return;
+
+  const cur = window.selState.focused;
+  const curIdx = cur ? wraps.indexOf(cur) : -1;
+
+  if(e.key === "ArrowRight" || e.key === "ArrowLeft" ||
+     e.key === "ArrowDown" || e.key === "ArrowUp"){
+    e.preventDefault();
+    let nextIdx;
+    if(e.key === "ArrowRight" || e.key === "ArrowDown"){
+      nextIdx = curIdx < 0 ? 0 : Math.min(curIdx + 1, wraps.length - 1);
+    } else {
+      nextIdx = curIdx < 0 ? 0 : Math.max(curIdx - 1, 0);
+    }
+    const next = wraps[nextIdx];
+
+    if(e.shiftKey){
+      // Shift+Pfeil: Bereich erweitern
+      setWrapSelected(next, true);
+    } else {
+      // Nur Fokus bewegen (Auswahl nicht ändern)
+    }
+    setFocus(next);
+    return;
+  }
+
+  if(e.key === " " && cur){
+    // Leertaste: fokussiertes Bild an/abwählen
+    e.preventDefault();
+    const cb = cur.querySelector(".imgCb");
+    setWrapSelected(cur, !cb.checked);
+    return;
+  }
+
+  if(e.key === "Enter" && cur){
+    // Enter: Viewer öffnen für fokussiertes Bild
+    e.preventDefault();
+    const folderKey = cur.dataset.folderKey;
+    const img = cur.querySelector("img.t");
+    const src = img ? img.src : "";
+    if(cur.dataset.preview === "1"){
+      const pUrls = (window.previewImages || {})[folderKey] || [];
+      const pIdx = pUrls.indexOf(src);
+      openViewerWith(folderKey, pUrls, pIdx >= 0 ? pIdx : 0);
+    } else {
+      const idx = parseInt(cur.dataset.idx, 10);
+      openViewerBy(folderKey, idx);
+    }
+    return;
+  }
+
+  // Strg+A: alle sichtbaren auswählen
+  if((e.ctrlKey || e.metaKey) && e.key === "a"){
+    e.preventDefault();
+    wraps.forEach(w => setWrapSelected(w, true));
+    return;
+  }
+});
 
 function initPreviews(){
   const cards = Array.from(document.querySelectorAll(".card"));
@@ -1210,89 +1498,74 @@ try {
           continue
         }
 
-        $ok = 0
-        $fail = 0
-        $errors = @()
+        # Sofort antworten – Löschung läuft im Hintergrund
+        $json = @{ ok = 0; queued = ($selectedFolders.Count + $selectedImgs.Count); msg = "Löschung gestartet" } | ConvertTo-Json -Compress
+        Send-ResponseText -Response $res -Text $json -StatusCode 200 -ContentType "application/json; charset=utf-8"
 
-        # --- Bilder nach Ordner gruppieren ---
-        $imgsByFolder = @{}
-        foreach ($relImg in $selectedImgs) {
-          try {
-            $imgFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $relImg
-            $parentDir = Split-Path -Parent $imgFull
-            $parentRel = Get-RelativePathSafe -Base $RootFull -Full $parentDir
-            if (-not $imgsByFolder.ContainsKey($parentRel)) { $imgsByFolder[$parentRel] = @() }
-            $imgsByFolder[$parentRel] += $imgFull
-          } catch {
-            $fail++
-            $errors += "E040 $relImg : $($_.Exception.Message)"
-          }
-        }
+        # --- Background-Löschung ---
+        $delRootFull   = $RootFull
+        $delHardDelete = [bool]$HardDelete
+        $delImageExt   = $ImageExt
+        $delFolders    = $selectedFolders
+        $delImgs       = $selectedImgs
 
-        # --- Prüfen ob alle Bilder eines Ordners selektiert -> ganzen Ordner löschen ---
-        $foldersToDeleteWhole = @()
+        $ps = [PowerShell]::Create()
+        $null = $ps.AddScript({
+          param($RootFull, $DoHardDelete, $ImageExt, $SelFolders, $SelImgs,
+                $FnResolve, $FnGetRel, $FnDeleteFolder)
 
-        foreach ($folderRel in @($imgsByFolder.Keys)) {
-          $folderFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $folderRel
-          $allImgsInFolder = Get-ChildItem -LiteralPath $folderFull -File -Force -ErrorAction SilentlyContinue |
-            Where-Object { $ImageExt -contains $_.Extension.ToLowerInvariant() }
+          Add-Type -AssemblyName Microsoft.VisualBasic | Out-Null
 
-          if ($allImgsInFolder.Count -gt 0 -and $imgsByFolder[$folderRel].Count -ge $allImgsInFolder.Count) {
-            # Alle Bilder des Ordners ausgewählt -> ganzen Ordner löschen
-            $foldersToDeleteWhole += $folderRel
-            $imgsByFolder.Remove($folderRel)
-          }
-        }
-
-        # Ordner löschen (explizit ausgewählte + komplett selektierte)
-        $allFolders = @($selectedFolders) + @($foldersToDeleteWhole) | Select-Object -Unique
-
-        foreach ($relFolder in $allFolders) {
-          try {
-            Delete-FolderSafe -RootFull $RootFull -RelFolder $relFolder -HardDelete:$HardDelete
-            $ok++
-          } catch {
-            $fail++
-            $errors += "E040 $relFolder : $($_.Exception.Message)"
-          }
-        }
-
-        # Verbleibende Einzel-Bilder löschen (gebündelt pro Ordner)
-        foreach ($folderRel in $imgsByFolder.Keys) {
-          foreach ($imgFull in $imgsByFolder[$folderRel]) {
+          # --- Bilder nach Ordner gruppieren ---
+          $imgsByFolder = @{}
+          foreach ($relImg in $SelImgs) {
             try {
-              if (Test-Path -LiteralPath $imgFull -PathType Leaf) {
-                if ($HardDelete) {
-                  Remove-Item -LiteralPath $imgFull -Force
-                } else {
-                  [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
-                    $imgFull,
-                    [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
-                    [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
-                  )
+              $imgFull = & $FnResolve -RootFull $RootFull -RelPath $relImg
+              $parentDir = Split-Path -Parent $imgFull
+              $parentRel = & $FnGetRel -Base $RootFull -Full $parentDir
+              if (-not $imgsByFolder.ContainsKey($parentRel)) { $imgsByFolder[$parentRel] = @() }
+              $imgsByFolder[$parentRel] += $imgFull
+            } catch { }
+          }
+
+          # Einzel-Bilder löschen
+          foreach ($folderRel in $imgsByFolder.Keys) {
+            foreach ($imgFull in $imgsByFolder[$folderRel]) {
+              try {
+                if (Test-Path -LiteralPath $imgFull -PathType Leaf) {
+                  if ($DoHardDelete) {
+                    Remove-Item -LiteralPath $imgFull -Force
+                  } else {
+                    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
+                      $imgFull,
+                      [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+                      [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
+                    )
+                  }
                 }
-                $ok++
-              } else {
-                $fail++
-                $errors += "E040 Bild nicht gefunden: $imgFull"
-              }
-            } catch {
-              $fail++
-              $errors += "E040 $imgFull : $($_.Exception.Message)"
+              } catch { }
             }
           }
-        }
 
-        $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt
+          # Ordner löschen
+          foreach ($relFolder in $SelFolders) {
+            try {
+              & $FnDeleteFolder -RootFull $RootFull -RelFolder $relFolder -HardDelete:$DoHardDelete
+            } catch { }
+          }
+        })
 
-        $msg = "Gelöscht: OK=$ok | FAIL=$fail"
-        if ($errors.Count -gt 0) {
-          $msg += " | Fehler: " + ($errors -join " || ")
-        }
+        # Funktionen als ScriptBlocks übergeben
+        $null = $ps.AddParameter("RootFull", $delRootFull)
+        $null = $ps.AddParameter("DoHardDelete", $delHardDelete)
+        $null = $ps.AddParameter("ImageExt", $delImageExt)
+        $null = $ps.AddParameter("SelFolders", $delFolders)
+        $null = $ps.AddParameter("SelImgs", $delImgs)
+        $null = $ps.AddParameter("FnResolve", ${function:Resolve-FullPathSafe})
+        $null = $ps.AddParameter("FnGetRel", ${function:Get-RelativePathSafe})
+        $null = $ps.AddParameter("FnDeleteFolder", ${function:Delete-FolderSafe})
 
-        # JSON-Response für async Frontend
-        $json = @{ ok = $ok; fail = $fail; msg = $msg } | ConvertTo-Json -Compress
-        Send-ResponseText -Response $res -Text $json -StatusCode 200 -ContentType "application/json; charset=utf-8"
+        $null = $ps.BeginInvoke()
         continue
       }
 
