@@ -528,6 +528,7 @@ function Render-IndexPage {
 
     <button class="neutral" type="button" onclick="submitMove()">Verschieben</button>
     <button class="danger"  type="button" onclick="submitDelete()">Löschen</button>
+    <button class="neutral" type="button" onclick="openRecycleBin()" title="Papierkorb öffnen">🗑️</button>
     <button class="closeBtn" title="Beenden" onclick="shutdown()">✕</button>
   </div>
 
@@ -885,6 +886,10 @@ function changeRoot(){
     .catch(e => alert("Fehler: " + e));
 }
 
+function openRecycleBin(){
+  fetch("/openrecyclebin", { method:"POST" });
+}
+
 function submitMove(){
   const folders = Array.from(document.querySelectorAll("input[type=checkbox][name=folder]:checked"));
   const imgs = Array.from(document.querySelectorAll(".imgCb:checked"));
@@ -971,6 +976,12 @@ try {
         $ServerRunning = $false
         Send-ResponseHtml -Response $res -Html "<html><body>Server beendet</body></html>"
         break
+      }
+
+      if ($path -eq "/openrecyclebin" -and $req.HttpMethod -eq "POST") {
+        Start-Process "explorer.exe" -ArgumentList "shell:RecycleBinFolder"
+        Send-ResponseText -Response $res -Text "OK" -StatusCode 200
+        continue
       }
 
       if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
