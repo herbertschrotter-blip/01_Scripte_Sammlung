@@ -277,6 +277,11 @@ function Render-IndexPage {
     outline-offset:-3px;
     opacity:.75;
   }
+  .imgWrap.focused{
+    outline:2px solid var(--c-accent);
+    outline-offset:2px;
+    border-radius:var(--radius-sm);
+  }
 
   /* --- Inputs --- */
   input[type=text]{
@@ -719,16 +724,6 @@ function closeViewer(){
   img.src = "";
 }
 
-// Tastatursteuerung (nur wenn Viewer offen)
-document.addEventListener("keydown", (e) => {
-  const v = document.getElementById("viewer");
-  if (v.style.display !== "flex") return;
-
-  if(e.key === "Escape") closeViewer();
-  if(e.key === "ArrowLeft") viewerPrev();
-  if(e.key === "ArrowRight") viewerNext();
-});
-
 // Klick links/rechts im Bild -> prev/next
 document.getElementById("viewerImg").addEventListener("click", (e) => {
   const rect = e.target.getBoundingClientRect();
@@ -783,9 +778,73 @@ function ensurePreview(card){
   preview.dataset.previewLoaded = "1";
 }
 
+// --- Selection State ---
+window.selState = { lastClicked: null, focused: null };
+
+function getAllWraps(){
+  return Array.from(document.querySelectorAll(".imgWrap"));
+}
+
+function getVisibleWraps(){
+  return getAllWraps().filter(w => {
+    const card = w.closest(".card");
+    if(!card || card.style.display === "none") return false;
+    const container = w.closest(".thumbs, .previewRow");
+    if(!container) return false;
+    return !container.classList.contains("isCollapsed") && !container.classList.contains("isHidden");
+  });
+}
+
+function setWrapSelected(wrap, state){
+  const cb = wrap.querySelector(".imgCb");
+  if(cb) cb.checked = state;
+  wrap.classList.toggle("selected", state);
+}
+
+function setFocus(wrap){
+  const old = window.selState.focused;
+  if(old) old.classList.remove("focused");
+  if(wrap){
+    wrap.classList.add("focused");
+    wrap.scrollIntoView({block:"nearest",behavior:"smooth"});
+  }
+  window.selState.focused = wrap;
+}
+
+function handleImgClick(ev, wrap){
+  ev.stopPropagation();
+  const wraps = getVisibleWraps();
+  const idx = wraps.indexOf(wrap);
+
+  if(ev.shiftKey && window.selState.lastClicked !== null){
+    // Shift+Klick: Bereich auswählen
+    const lastIdx = wraps.indexOf(window.selState.lastClicked);
+    if(lastIdx >= 0){
+      const from = Math.min(lastIdx, idx);
+      const to = Math.max(lastIdx, idx);
+      for(let i = from; i <= to; i++){
+        setWrapSelected(wraps[i], true);
+      }
+    }
+  } else if(ev.ctrlKey || ev.metaKey){
+    // Strg+Klick: Einzeln umschalten
+    const cb = wrap.querySelector(".imgCb");
+    setWrapSelected(wrap, !cb.checked);
+  } else {
+    // Normaler Klick: nur dieses auswählen, Rest abwählen
+    wraps.forEach(w => setWrapSelected(w, false));
+    setWrapSelected(wrap, true);
+  }
+
+  window.selState.lastClicked = wrap;
+  setFocus(wrap);
+}
+
 function createImgWrap(src, rel, folderKey, idx){
   const wrap = document.createElement("div");
   wrap.className = "imgWrap";
+  wrap.dataset.folderKey = folderKey;
+  wrap.dataset.idx = idx;
 
   const cb = document.createElement("input");
   cb.type = "checkbox";
@@ -801,7 +860,14 @@ function createImgWrap(src, rel, folderKey, idx){
   img.className = "t";
   img.loading = "lazy";
   img.src = src;
+
+  // Einfach-Klick = Selektion
   img.addEventListener("click", (ev) => {
+    handleImgClick(ev, wrap);
+  });
+
+  // Doppelklick = Viewer
+  img.addEventListener("dblclick", (ev) => {
     ev.stopPropagation();
     const all = window.folderImages[folderKey] || [src];
     const i = all.indexOf(src);
@@ -812,6 +878,72 @@ function createImgWrap(src, rel, folderKey, idx){
   wrap.appendChild(img);
   return wrap;
 }
+
+// --- Keyboard: Pfeiltasten, Shift+Pfeiltasten, Leertaste, Enter ---
+document.addEventListener("keydown", (e) => {
+  // Viewer offen -> nur Viewer-Steuerung
+  const viewer = document.getElementById("viewer");
+  if(viewer.style.display === "flex"){
+    if(e.key === "Escape") closeViewer();
+    if(e.key === "ArrowLeft") viewerPrev();
+    if(e.key === "ArrowRight") viewerNext();
+    return;
+  }
+
+  // Filter-Input hat Fokus -> nicht eingreifen
+  if(document.activeElement && document.activeElement.tagName === "INPUT") return;
+
+  const wraps = getVisibleWraps();
+  if(!wraps.length) return;
+
+  const cur = window.selState.focused;
+  const curIdx = cur ? wraps.indexOf(cur) : -1;
+
+  if(e.key === "ArrowRight" || e.key === "ArrowLeft" ||
+     e.key === "ArrowDown" || e.key === "ArrowUp"){
+    e.preventDefault();
+    let nextIdx;
+    if(e.key === "ArrowRight" || e.key === "ArrowDown"){
+      nextIdx = curIdx < 0 ? 0 : Math.min(curIdx + 1, wraps.length - 1);
+    } else {
+      nextIdx = curIdx < 0 ? 0 : Math.max(curIdx - 1, 0);
+    }
+    const next = wraps[nextIdx];
+
+    if(e.shiftKey){
+      // Shift+Pfeil: Bereich erweitern
+      setWrapSelected(next, true);
+    } else {
+      // Nur Fokus bewegen (Auswahl nicht ändern)
+    }
+    setFocus(next);
+    return;
+  }
+
+  if(e.key === " " && cur){
+    // Leertaste: fokussiertes Bild an/abwählen
+    e.preventDefault();
+    const cb = cur.querySelector(".imgCb");
+    setWrapSelected(cur, !cb.checked);
+    return;
+  }
+
+  if(e.key === "Enter" && cur){
+    // Enter: Viewer öffnen für fokussiertes Bild
+    e.preventDefault();
+    const folderKey = cur.dataset.folderKey;
+    const idx = parseInt(cur.dataset.idx, 10);
+    openViewerBy(folderKey, idx);
+    return;
+  }
+
+  // Strg+A: alle sichtbaren auswählen
+  if((e.ctrlKey || e.metaKey) && e.key === "a"){
+    e.preventDefault();
+    wraps.forEach(w => setWrapSelected(w, true));
+    return;
+  }
+});
 
 function initPreviews(){
   const cards = Array.from(document.querySelectorAll(".card"));
