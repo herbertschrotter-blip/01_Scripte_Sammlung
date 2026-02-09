@@ -142,63 +142,202 @@ function Render-IndexPage {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Foto-Ordner Review & Delete</title>
 <style>
-  body{font-family:Arial, sans-serif; margin:16px; background:#f7f7f7;}
-  .top{display:flex; gap:12px; align-items:center; flex-wrap:wrap; position:sticky; top:0; z-index:100;}
-  .box{background:#fff; padding:12px; border-radius:10px; box-shadow:0 1px 4px rgba(0,0,0,.08);}
-  .msg{margin:12px 0; padding:10px; border-radius:8px; background:#e9f5ff;}
-  .grid{display:grid; grid-template-columns:1fr; gap:10px; margin-top:12px;}
-  .card{background:#fff; padding:10px; border-radius:10px; box-shadow:0 1px 4px rgba(0,0,0,.08);}
-  .hdr{display:flex; gap:10px; align-items:center; cursor:pointer; user-select:none;}
-  .path{font-weight:600; word-break:break-all;}
-  .meta{opacity:.7;}
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-  .thumbs{display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;}
+  :root{
+    --thumb:140px;
+    --c-bg:#f0f2f5;
+    --c-surface:#fff;
+    --c-border:#e2e5ea;
+    --c-text:#1a1d23;
+    --c-text-soft:#6b7280;
+    --c-accent:#4f6ef7;
+    --c-accent-hover:#3b5de7;
+    --c-danger:#dc2626;
+    --c-danger-hover:#b91c1c;
+    --c-success:#059669;
+    --radius:12px;
+    --radius-sm:8px;
+    --shadow-sm:0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+    --shadow-md:0 4px 12px rgba(0,0,0,.08);
+    --transition:180ms ease;
+  }
+
+  *{box-sizing:border-box;}
+
+  body{
+    font-family:'Inter',system-ui,-apple-system,sans-serif;
+    margin:0; padding:16px 20px;
+    background:var(--c-bg);
+    color:var(--c-text);
+    line-height:1.5;
+  }
+
+  /* --- Toolbar --- */
+  .top{
+    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+    position:sticky; top:0; z-index:100;
+    backdrop-filter:blur(12px);
+    -webkit-backdrop-filter:blur(12px);
+    background:rgba(255,255,255,.82);
+    border-bottom:1px solid var(--c-border);
+  }
+  .box{
+    padding:14px 18px;
+    border-radius:var(--radius);
+    box-shadow:var(--shadow-sm);
+  }
+
+  .rootInfo{font-size:13px; line-height:1.6;}
+  .rootInfo b{font-weight:600;}
+
+  /* --- Messages --- */
+  .msg{
+    margin:14px 0; padding:12px 16px;
+    border-radius:var(--radius-sm);
+    background:#eff6ff;
+    border-left:4px solid var(--c-accent);
+    font-size:14px;
+    color:#1e40af;
+  }
+
+  /* --- Grid / Cards --- */
+  .grid{display:grid; grid-template-columns:1fr; gap:10px; margin-top:14px;}
+
+  .card{
+    background:var(--c-surface);
+    padding:14px 16px;
+    border-radius:var(--radius);
+    box-shadow:var(--shadow-sm);
+    border:1px solid var(--c-border);
+    transition:box-shadow var(--transition), border-color var(--transition);
+  }
+  .card:hover{
+    box-shadow:var(--shadow-md);
+    border-color:#cbd5e1;
+  }
+
+  .hdr{display:flex; gap:10px; align-items:center; cursor:pointer; user-select:none;}
+  .hdr input[type=checkbox]{
+    width:18px; height:18px;
+    accent-color:var(--c-accent);
+    cursor:pointer;
+    flex-shrink:0;
+  }
+  .path{font-weight:600; font-size:14px; word-break:break-all;}
+  .meta{color:var(--c-text-soft); font-size:13px; font-weight:500;}
+
+  /* --- Thumbnails --- */
+  .thumbs{display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;}
   .thumbs.isCollapsed{display:none;}
 
-  .previewRow{display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;}
+  .previewRow{display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;}
   .previewRow.isHidden{display:none;}
 
-  :root{ --thumb:140px; }
-  img.t{width:var(--thumb); height:var(--thumb); object-fit:cover; border-radius:10px; background:#ddd; cursor:zoom-in;}
+  img.t{
+    width:var(--thumb); height:var(--thumb);
+    object-fit:cover;
+    border-radius:var(--radius-sm);
+    background:#e5e7eb;
+    cursor:zoom-in;
+    transition:transform var(--transition), box-shadow var(--transition);
+  }
+  img.t:hover{
+    transform:scale(1.04);
+    box-shadow:0 4px 16px rgba(0,0,0,.12);
+  }
 
-  input[type=text]{padding:8px; min-width:260px;}
-  button{padding:10px 14px; border:0; border-radius:10px; cursor:pointer;}
-  button.danger{background:#c62828; color:#fff;}
-  button.neutral{background:#444; color:#fff;}
-  .hint{opacity:.75; font-size:12px;}
+  /* --- Inputs --- */
+  input[type=text]{
+    padding:9px 14px;
+    min-width:260px;
+    border:1px solid var(--c-border);
+    border-radius:var(--radius-sm);
+    font-family:inherit;
+    font-size:13px;
+    outline:none;
+    transition:border-color var(--transition), box-shadow var(--transition);
+  }
+  input[type=text]:focus{
+    border-color:var(--c-accent);
+    box-shadow:0 0 0 3px rgba(79,110,247,.15);
+  }
+
+  /* --- Buttons --- */
+  button{
+    padding:8px 16px;
+    border:none;
+    border-radius:var(--radius-sm);
+    cursor:pointer;
+    font-family:inherit;
+    font-size:13px;
+    font-weight:500;
+    transition:background var(--transition), transform 100ms ease, box-shadow var(--transition);
+  }
+  button:active{transform:scale(.97);}
+
+  button.neutral{
+    background:#f1f3f5;
+    color:var(--c-text);
+    border:1px solid var(--c-border);
+  }
+  button.neutral:hover{
+    background:#e5e7eb;
+    border-color:#cbd5e1;
+  }
+
+  button.accent{
+    background:var(--c-accent);
+    color:#fff;
+  }
+  button.accent:hover{background:var(--c-accent-hover);}
+
+  button.danger{
+    background:var(--c-danger);
+    color:#fff;
+  }
+  button.danger:hover{background:var(--c-danger-hover);}
+
+  .hint{color:var(--c-text-soft); font-size:12px; font-weight:500;}
 
   .toggleBtn{
     margin-left:auto;
-    padding:6px 10px;
-    border-radius:10px;
-    background:#eee;
+    padding:6px 12px;
+    border-radius:var(--radius-sm);
+    background:#f1f3f5;
+    border:1px solid var(--c-border);
     cursor:pointer;
     font-weight:600;
+    font-size:13px;
+    transition:background var(--transition);
   }
-  .toggleBtn:hover{background:#e0e0e0;}
+  .toggleBtn:hover{background:#e5e7eb;}
 
   .closeBtn{
-    position:fixed;
-    top:12px;
-    right:12px;
-    font-size:18px;
-    font-weight:bold;
-    background:#c62828;
+    font-size:16px;
+    font-weight:700;
+    background:var(--c-danger);
     color:#fff;
     border:none;
     border-radius:50%;
-    width:36px;
-    height:36px;
+    width:34px;
+    height:34px;
     cursor:pointer;
-    box-shadow:0 1px 4px rgba(0,0,0,.20);
+    flex-shrink:0;
+    transition:background var(--transition), transform 100ms ease;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
   }
-  .closeBtn:hover{ background:#b71c1c; }
+  .closeBtn:hover{background:var(--c-danger-hover);}
+  .closeBtn:active{transform:scale(.92);}
 
-  /* Viewer (Lightbox) */
+  /* --- Viewer (Lightbox) --- */
   #viewer{
     position:fixed;
     inset:0;
-    background:rgba(0,0,0,.92);
+    background:rgba(0,0,0,.88);
+    backdrop-filter:blur(4px);
     display:none;
     align-items:center;
     justify-content:center;
@@ -212,7 +351,7 @@ function Render-IndexPage {
   #viewerImg{
     max-width:96vw;
     max-height:96vh;
-    border-radius:12px;
+    border-radius:var(--radius);
     display:block;
     cursor:pointer;
   }
@@ -220,56 +359,81 @@ function Render-IndexPage {
     position:absolute;
     top:-10px;
     right:-10px;
-    width:38px;
-    height:38px;
+    width:36px;
+    height:36px;
     border-radius:50%;
     border:0;
-    background:#c62828;
+    background:var(--c-danger);
     color:#fff;
     font-weight:700;
+    font-size:14px;
     cursor:pointer;
-    box-shadow:0 1px 6px rgba(0,0,0,.35);
+    box-shadow:0 2px 8px rgba(0,0,0,.3);
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    transition:background var(--transition), transform 100ms ease;
   }
+  #viewerX:hover{background:var(--c-danger-hover);}
+  #viewerX:active{transform:scale(.9);}
 
-  #viewerBar{
-    margin-top:10px;
-    text-align:center;
-  }
+  #viewerBar{margin-top:12px; text-align:center;}
   #viewerOpen{
     display:inline-block;
-    padding:10px 14px;
-    border-radius:10px;
-    background:#444;
+    padding:10px 20px;
+    border-radius:var(--radius-sm);
+    background:rgba(255,255,255,.15);
     color:#fff;
     text-decoration:none;
     font-weight:600;
+    font-size:14px;
+    backdrop-filter:blur(4px);
+    transition:background var(--transition);
   }
-  #viewerOpen:hover{background:#333;}
+  #viewerOpen:hover{background:rgba(255,255,255,.25);}
+
+  /* --- Thumb size button group --- */
+  .sizeGroup{
+    display:inline-flex;
+    border:1px solid var(--c-border);
+    border-radius:var(--radius-sm);
+    overflow:hidden;
+  }
+  .sizeGroup button{
+    border:none;
+    border-radius:0;
+    background:#f9fafb;
+    color:var(--c-text);
+    padding:6px 12px;
+    font-size:12px;
+    font-weight:500;
+    border-right:1px solid var(--c-border);
+  }
+  .sizeGroup button:last-child{border-right:none;}
+  .sizeGroup button:hover{background:#e5e7eb;}
 </style>
 </head>
 <body>
-  <button class="closeBtn" title="Beenden" onclick="shutdown()">X</button>
-
   <div class="box top">
-    <div>
+    <div class="rootInfo">
       <div><b>Root:</b> $(HtmlEncode($RootFull))</div>
       <div class="hint"><b>Löschmodus:</b> $hardInfo</div>
     </div>
 
     <div style="flex:1"></div>
 
-    <input id="filter" type="text" placeholder="Filter (Teilstring im Ordnerpfad)" oninput="applyFilter()" />
+    <input id="filter" type="text" placeholder="Filter (Ordnerpfad)…" oninput="applyFilter()" />
 
-    <div class="hint" style="margin-right:8px;">
-      Thumbnails:
-      <button class="neutral" type="button" onclick="setThumbSize('s')">klein</button>
-      <button class="neutral" type="button" onclick="setThumbSize('m')">mittel</button>
-      <button class="neutral" type="button" onclick="setThumbSize('l')">groß</button>
+    <div class="sizeGroup">
+      <button type="button" onclick="setThumbSize('s')">S</button>
+      <button type="button" onclick="setThumbSize('m')">M</button>
+      <button type="button" onclick="setThumbSize('l')">L</button>
     </div>
 
     <button class="neutral" type="button" onclick="selectAll(true)">Alle</button>
     <button class="neutral" type="button" onclick="selectAll(false)">Keine</button>
-    <button class="danger"  type="button" onclick="submitDelete()">Ausgewählte Ordner löschen</button>
+    <button class="danger"  type="button" onclick="submitDelete()">Ausgewählte löschen</button>
+    <button class="closeBtn" title="Beenden" onclick="shutdown()">✕</button>
   </div>
 
   $msgHtml
