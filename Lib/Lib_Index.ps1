@@ -3,7 +3,8 @@ ManifestHint:
   ExportFunctions = @(
     "Get-RelativePathSafe","Resolve-FullPathSafe",
     "Get-ContentTypeByExt",
-    "Scan-ImageFolders","Delete-FolderSafe"
+    "Scan-ImageFolders",
+    "Delete-FolderSafe","Delete-FileSafe"
   )
   Description     = "Index/Scan/Delete Helpers: sichere Pfade, ContentTypes, Folder-Scan, Delete (Papierkorb/HardDelete)."
   Category        = "Media"
@@ -11,12 +12,18 @@ ManifestHint:
   Dependencies    = @("Microsoft.VisualBasic")
 
 Zweck:
-  - Foto-Ordner scannen + sichere Pfadauflösung + Löschlogik.
+  - Foto-Ordner scannen
+  - sichere Pfadauflösung (Root-Schutz)
+  - Content-Type-Ermittlung
+  - Löschen von Ordnern UND Dateien (Papierkorb oder HardDelete)
 #>
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# ------------------------------------------------------------
+# Relative Pfade sicher ermitteln
+# ------------------------------------------------------------
 function Get-RelativePathSafe {
   param([string]$Base, [string]$Full)
 
@@ -31,6 +38,9 @@ function Get-RelativePathSafe {
   return $rel
 }
 
+# ------------------------------------------------------------
+# Relativen Pfad sicher zu FullPath auflösen
+# ------------------------------------------------------------
 function Resolve-FullPathSafe {
   param(
     [string]$RootFull,
@@ -41,7 +51,7 @@ function Resolve-FullPathSafe {
     throw "RelPath leer"
   }
 
-  # Zusätzliche Absicherung gegen Traversal
+  # Schutz gegen Path Traversal
   if ($RelPath -match '(^|[\\/])\.\.([\\/]|$)') {
     throw "Ungültiger RelPath (..): $RelPath"
   }
@@ -56,8 +66,12 @@ function Resolve-FullPathSafe {
   return $full
 }
 
+# ------------------------------------------------------------
+# Content-Type anhand Dateiendung
+# ------------------------------------------------------------
 function Get-ContentTypeByExt {
   param([string]$Path)
+
   switch ([System.IO.Path]::GetExtension($Path).ToLowerInvariant()) {
     ".jpg"  { "image/jpeg" }
     ".jpeg" { "image/jpeg" }
@@ -81,15 +95,21 @@ function Get-ContentTypeByExt {
   }
 }
 
+# ------------------------------------------------------------
+# Natürliche Sortierung (z.B. Bild2 vor Bild10)
+# ------------------------------------------------------------
 function Get-NaturalSortKey {
   param([string]$Text)
-  # Zerlegt Text in Segmente: Zahlen werden als Long gepaddet, Text bleibt lowercase
+
   [regex]::Replace($Text, '(\d+)', {
     param($m)
     $m.Value.PadLeft(20, '0')
   }).ToLowerInvariant()
 }
 
+# ------------------------------------------------------------
+# Bildordner scannen
+# ------------------------------------------------------------
 function Scan-ImageFolders {
   param(
     [string]$Root,
@@ -110,13 +130,18 @@ function Scan-ImageFolders {
 
       if ($imgs.Count -gt 0) {
         $folders += [pscustomobject]@{
-          FullPath   = $d.FullName
-          RelPath    = Get-RelativePathSafe -Base $rootFull -Full $d.FullName
-          ImgCount   = $imgs.Count
-          ImagesRel  = @($imgs | ForEach-Object { Get-RelativePathSafe -Base $rootFull -Full $_.FullName })
+          FullPath  = $d.FullName
+          RelPath   = Get-RelativePathSafe -Base $rootFull -Full $d.FullName
+          ImgCount  = $imgs.Count
+          ImagesRel = @(
+            $imgs | ForEach-Object {
+              Get-RelativePathSafe -Base $rootFull -Full $_.FullName
+            }
+          )
         }
       }
-    } catch {
+    }
+    catch {
       # Ordner überspringen, Scan fortsetzen
     }
   }
@@ -124,6 +149,9 @@ function Scan-ImageFolders {
   return $folders | Sort-Object { Get-NaturalSortKey $_.RelPath }
 }
 
+# ------------------------------------------------------------
+# Ordner sicher löschen (Papierkorb oder HardDelete)
+# ------------------------------------------------------------
 function Delete-FolderSafe {
   param(
     [string]$RootFull,
@@ -139,9 +167,39 @@ function Delete-FolderSafe {
 
   if ($HardDelete) {
     Remove-Item -LiteralPath $targetFull -Recurse -Force
-  } else {
+  }
+  else {
     Add-Type -AssemblyName Microsoft.VisualBasic | Out-Null
     [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory(
+      $targetFull,
+      [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+      [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
+    )
+  }
+}
+
+# ------------------------------------------------------------
+# Datei sicher löschen (Papierkorb oder HardDelete)
+# ------------------------------------------------------------
+function Delete-FileSafe {
+  param(
+    [string]$RootFull,
+    [string]$RelFile,
+    [switch]$HardDelete
+  )
+
+  $targetFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $RelFile
+
+  if (-not (Test-Path -LiteralPath $targetFull -PathType Leaf)) {
+    throw "Datei nicht gefunden: $targetFull"
+  }
+
+  if ($HardDelete) {
+    Remove-Item -LiteralPath $targetFull -Force
+  }
+  else {
+    Add-Type -AssemblyName Microsoft.VisualBasic | Out-Null
+    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
       $targetFull,
       [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
       [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
