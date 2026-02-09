@@ -53,6 +53,9 @@ $ProjectRoot = Split-Path -Parent $ScriptDir
 # -----------------------------
 $ImageExt = @(".jpg",".jpeg",".png",".webp",".gif",".bmp",".tif",".tiff")
 
+# Assembly einmal vorladen (nicht bei jedem Delete-Request)
+Add-Type -AssemblyName Microsoft.VisualBasic | Out-Null
+
 function Write-Err {
   param([string]$Code, [string]$Msg)
   Write-Host "$Code $Msg" -ForegroundColor Red
@@ -462,6 +465,38 @@ function Render-IndexPage {
   .filterActions .sizeGroup button{
     flex:1;
   }
+
+  /* --- Lade-Overlay --- */
+  #loadOverlay{
+    position:fixed;
+    inset:0;
+    background:rgba(0,0,0,.5);
+    backdrop-filter:blur(4px);
+    display:none;
+    align-items:center;
+    justify-content:center;
+    z-index:10000;
+  }
+  #loadOverlay.active{display:flex;}
+  .loadBox{
+    background:var(--c-surface);
+    padding:28px 40px;
+    border-radius:var(--radius);
+    box-shadow:var(--shadow-md);
+    text-align:center;
+    font-size:15px;
+    font-weight:500;
+  }
+  .spinner{
+    display:inline-block;
+    width:28px; height:28px;
+    border:3px solid var(--c-border);
+    border-top-color:var(--c-accent);
+    border-radius:50%;
+    animation:spin .7s linear infinite;
+    margin-bottom:12px;
+  }
+  @keyframes spin{to{transform:rotate(360deg);}}
 </style>
 </head>
 <body>
@@ -509,6 +544,13 @@ function Render-IndexPage {
       <button id="viewerX" type="button" onclick="closeViewer()">X</button>
       <img id="viewerImg" src="" title="Links klicken = zurück | Rechts klicken = vorwärts" />
       <div id="viewerBar"><a id="viewerOpen" href="" target="_blank" rel="noopener">In neuem Tab öffnen</a></div>
+    </div>
+  </div>
+
+  <div id="loadOverlay">
+    <div class="loadBox">
+      <div class="spinner"></div>
+      <div id="loadMsg">Lösche…</div>
     </div>
   </div>
 
@@ -572,22 +614,33 @@ function submitDelete(){
 
   if(!confirm(msg)) return;
 
-  // Hidden inputs für Bilder ins Formular einfügen
-  const form = document.getElementById("delForm");
+  // Lade-Overlay anzeigen
+  const overlay = document.getElementById("loadOverlay");
+  const loadMsg = document.getElementById("loadMsg");
+  overlay.classList.add("active");
+  loadMsg.textContent = "Lösche " + (folders.length + imgs.length) + " Elemente…";
 
-  // Alte img-Inputs entfernen
-  form.querySelectorAll("input[name=img]").forEach(el => el.remove());
+  // FormData zusammenbauen
+  const params = new URLSearchParams();
+  params.append("confirm", "1");
+  folders.forEach(cb => params.append("folder", cb.value));
+  imgs.forEach(cb => params.append("img", cb.dataset.rel));
 
-  imgs.forEach(cb => {
-    const hidden = document.createElement("input");
-    hidden.type = "hidden";
-    hidden.name = "img";
-    hidden.value = cb.dataset.rel;
-    form.appendChild(hidden);
+  fetch("/delete", {
+    method: "POST",
+    headers: {"Content-Type": "application/x-www-form-urlencoded"},
+    body: params.toString()
+  })
+  .then(r => r.json())
+  .then(data => {
+    overlay.classList.remove("active");
+    // Seite neu laden um aktualisierten Stand zu sehen
+    window.location.reload();
+  })
+  .catch(err => {
+    overlay.classList.remove("active");
+    alert("Fehler: " + err);
   });
-
-  form.querySelector("input[name=confirm]").value = "1";
-  form.submit();
 }
 
 // ganze Zeile klickbar, ohne Checkbox/Button zu triggern
@@ -959,8 +1012,7 @@ try {
         $form = Parse-FormUrlEncoded -Body $body
 
         if (-not $form.ContainsKey("confirm") -or $form["confirm"] -ne "1") {
-          $html = Render-IndexPage -RootFull $RootFull -Folders $Folders -Msg "Löschen abgebrochen (keine Bestätigung)."
-          Send-ResponseHtml -Response $res -Html $html
+          Send-ResponseText -Response $res -Text '{"error":"Keine Bestätigung"}' -StatusCode 400 -ContentType "application/json; charset=utf-8"
           continue
         }
 
@@ -979,8 +1031,7 @@ try {
         }
 
         if ($selectedFolders.Count -eq 0 -and $selectedImgs.Count -eq 0) {
-          $html = Render-IndexPage -RootFull $RootFull -Folders $Folders -Msg "Nichts ausgewählt."
-          Send-ResponseHtml -Response $res -Html $html
+          Send-ResponseText -Response $res -Text '{"error":"Nichts ausgewählt"}' -StatusCode 400 -ContentType "application/json; charset=utf-8"
           continue
         }
 
@@ -988,8 +1039,40 @@ try {
         $fail = 0
         $errors = @()
 
-        # Ordner löschen
-        foreach ($relFolder in $selectedFolders) {
+        # --- Bilder nach Ordner gruppieren ---
+        $imgsByFolder = @{}
+        foreach ($relImg in $selectedImgs) {
+          try {
+            $imgFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $relImg
+            $parentDir = Split-Path -Parent $imgFull
+            $parentRel = Get-RelativePathSafe -Base $RootFull -Full $parentDir
+            if (-not $imgsByFolder.ContainsKey($parentRel)) { $imgsByFolder[$parentRel] = @() }
+            $imgsByFolder[$parentRel] += $imgFull
+          } catch {
+            $fail++
+            $errors += "E040 $relImg : $($_.Exception.Message)"
+          }
+        }
+
+        # --- Prüfen ob alle Bilder eines Ordners selektiert -> ganzen Ordner löschen ---
+        $foldersToDeleteWhole = @()
+
+        foreach ($folderRel in @($imgsByFolder.Keys)) {
+          $folderFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $folderRel
+          $allImgsInFolder = Get-ChildItem -LiteralPath $folderFull -File -Force -ErrorAction SilentlyContinue |
+            Where-Object { $ImageExt -contains $_.Extension.ToLowerInvariant() }
+
+          if ($allImgsInFolder.Count -gt 0 -and $imgsByFolder[$folderRel].Count -ge $allImgsInFolder.Count) {
+            # Alle Bilder des Ordners ausgewählt -> ganzen Ordner löschen
+            $foldersToDeleteWhole += $folderRel
+            $imgsByFolder.Remove($folderRel)
+          }
+        }
+
+        # Ordner löschen (explizit ausgewählte + komplett selektierte)
+        $allFolders = @($selectedFolders) + @($foldersToDeleteWhole) | Select-Object -Unique
+
+        foreach ($relFolder in $allFolders) {
           try {
             Delete-FolderSafe -RootFull $RootFull -RelFolder $relFolder -HardDelete:$HardDelete
             $ok++
@@ -999,29 +1082,29 @@ try {
           }
         }
 
-        # Bilder löschen
-        foreach ($relImg in $selectedImgs) {
-          try {
-            $imgFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $relImg
-            if (Test-Path -LiteralPath $imgFull -PathType Leaf) {
-              if ($HardDelete) {
-                Remove-Item -LiteralPath $imgFull -Force
+        # Verbleibende Einzel-Bilder löschen (gebündelt pro Ordner)
+        foreach ($folderRel in $imgsByFolder.Keys) {
+          foreach ($imgFull in $imgsByFolder[$folderRel]) {
+            try {
+              if (Test-Path -LiteralPath $imgFull -PathType Leaf) {
+                if ($HardDelete) {
+                  Remove-Item -LiteralPath $imgFull -Force
+                } else {
+                  [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
+                    $imgFull,
+                    [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+                    [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
+                  )
+                }
+                $ok++
               } else {
-                Add-Type -AssemblyName Microsoft.VisualBasic | Out-Null
-                [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
-                  $imgFull,
-                  [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
-                  [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
-                )
+                $fail++
+                $errors += "E040 Bild nicht gefunden: $imgFull"
               }
-              $ok++
-            } else {
+            } catch {
               $fail++
-              $errors += "E040 Bild nicht gefunden: $relImg"
+              $errors += "E040 $imgFull : $($_.Exception.Message)"
             }
-          } catch {
-            $fail++
-            $errors += "E040 $relImg : $($_.Exception.Message)"
           }
         }
 
@@ -1032,8 +1115,9 @@ try {
           $msg += " | Fehler: " + ($errors -join " || ")
         }
 
-        $html = Render-IndexPage -RootFull $RootFull -Folders $Folders -Msg $msg
-        Send-ResponseHtml -Response $res -Html $html
+        # JSON-Response für async Frontend
+        $json = @{ ok = $ok; fail = $fail; msg = $msg } | ConvertTo-Json -Compress
+        Send-ResponseText -Response $res -Text $json -StatusCode 200 -ContentType "application/json; charset=utf-8"
         continue
       }
 
