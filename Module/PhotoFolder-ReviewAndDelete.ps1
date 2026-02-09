@@ -143,7 +143,7 @@ function Render-IndexPage {
 <title>Foto-Ordner Review & Delete</title>
 <style>
   body{font-family:Arial, sans-serif; margin:16px; background:#f7f7f7;}
-  .top{display:flex; gap:12px; align-items:center; flex-wrap:wrap;}
+  .top{display:flex; gap:12px; align-items:center; flex-wrap:wrap; position:sticky; top:0; z-index:100;}
   .box{background:#fff; padding:12px; border-radius:10px; box-shadow:0 1px 4px rgba(0,0,0,.08);}
   .msg{margin:12px 0; padding:10px; border-radius:8px; background:#e9f5ff;}
   .grid{display:grid; grid-template-columns:1fr; gap:10px; margin-top:12px;}
