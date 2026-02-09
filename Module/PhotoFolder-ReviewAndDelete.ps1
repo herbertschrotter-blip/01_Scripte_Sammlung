@@ -439,6 +439,22 @@ function Render-IndexPage {
   }
   .sizeGroup button:last-child{border-right:none;}
   .sizeGroup button:hover{background:#e5e7eb;}
+
+  /* --- Filter + Auswahl-Buttons --- */
+  .filterGroup{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+  }
+  .filterGroup input[type=text]{
+    width:100%;
+    min-width:260px;
+  }
+  .filterActions{
+    display:flex;
+    gap:6px;
+    align-items:center;
+  }
 </style>
 </head>
 <body>
@@ -451,7 +467,16 @@ function Render-IndexPage {
 
     <div style="flex:1"></div>
 
-    <input id="filter" type="text" placeholder="Filter (Ordnerpfad)…" oninput="applyFilter()" />
+    <div class="filterGroup">
+      <input id="filter" type="text" placeholder="Filter (Ordnerpfad)…" oninput="applyFilter()" />
+      <div class="filterActions">
+        <div class="sizeGroup">
+          <button type="button" onclick="selectAll(true)">Alle</button>
+          <button type="button" onclick="selectFiltered()">Auswahl</button>
+          <button type="button" onclick="selectAll(false)">Keine</button>
+        </div>
+      </div>
+    </div>
 
     <div class="sizeGroup">
       <button type="button" onclick="setThumbSize('s')">S</button>
@@ -459,8 +484,6 @@ function Render-IndexPage {
       <button type="button" onclick="setThumbSize('l')">L</button>
     </div>
 
-    <button class="neutral" type="button" onclick="selectAll(true)">Alle</button>
-    <button class="neutral" type="button" onclick="selectAll(false)">Keine</button>
     <button class="danger"  type="button" onclick="submitDelete()">Löschen</button>
     <button class="closeBtn" title="Beenden" onclick="shutdown()">✕</button>
   </div>
@@ -502,6 +525,20 @@ function selectAll(state){
   document.querySelectorAll(".imgCb").forEach(cb => {
     cb.checked = state;
     cb.closest(".imgWrap").classList.toggle("selected", state);
+  });
+}
+function selectFiltered(){
+  // Erst alles abwählen
+  selectAll(false);
+  // Dann nur sichtbare (gefilterte) Cards anhaken
+  document.querySelectorAll(".card").forEach(card => {
+    if(card.style.display === "none") return;
+    const folderCb = card.querySelector("input[type=checkbox][name=folder]");
+    if(folderCb) folderCb.checked = true;
+    card.querySelectorAll(".imgCb").forEach(cb => {
+      cb.checked = true;
+      cb.closest(".imgWrap").classList.add("selected");
+    });
   });
 }
 function applyFilter(){
