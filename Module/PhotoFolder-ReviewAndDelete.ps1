@@ -894,13 +894,6 @@ function submitMove(){
     return;
   }
 
-  let desc = "";
-  if(folders.length > 0) desc += folders.length + " Ordner";
-  if(folders.length > 0 && imgs.length > 0) desc += " und ";
-  if(imgs.length > 0) desc += imgs.length + " Bilder";
-
-  if(!confirm(desc + " verschieben? (Zielordner wird im nächsten Schritt gewählt)")) return;
-
   const overlay = document.getElementById("loadOverlay");
   const loadMsg = document.getElementById("loadMsg");
   overlay.classList.add("active");
@@ -918,9 +911,7 @@ function submitMove(){
   .then(r => r.json())
   .then(data => {
     overlay.classList.remove("active");
-    if(data.cancelled){
-      return;
-    }
+    if(data.cancelled) return;
     window.location.reload();
   })
   .catch(err => {
