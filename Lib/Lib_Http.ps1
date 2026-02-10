@@ -79,12 +79,21 @@ function Send-ResponseHtml {
     [int]$StatusCode = 200
   )
 
-  $bytes = [System.Text.Encoding]::UTF8.GetBytes($Html)
-  $Response.StatusCode = $StatusCode
-  $Response.ContentType = "text/html; charset=utf-8"
-  $Response.ContentLength64 = $bytes.Length
-  $Response.OutputStream.Write($bytes, 0, $bytes.Length)
-  $Response.OutputStream.Close()
+  try {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Html)
+    $Response.StatusCode = $StatusCode
+    $Response.ContentType = "text/html; charset=utf-8"
+    $Response.ContentLength64 = $bytes.Length
+    $Response.OutputStream.Write($bytes, 0, $bytes.Length)
+  } catch {
+    Write-Verbose "HTML Response bereits gesendet oder geschlossen: $($_.Exception.Message)"
+  } finally {
+    try {
+      $Response.OutputStream.Close()
+    } catch {
+      # Stream bereits geschlossen
+    }
+  }
 }
 
 # ------------------------------------------------------------
@@ -98,12 +107,21 @@ function Send-ResponseText {
     [string]$ContentType = "text/plain; charset=utf-8"
   )
 
-  $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
-  $Response.StatusCode = $StatusCode
-  $Response.ContentType = $ContentType
-  $Response.ContentLength64 = $bytes.Length
-  $Response.OutputStream.Write($bytes, 0, $bytes.Length)
-  $Response.OutputStream.Close()
+  try {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+    $Response.StatusCode = $StatusCode
+    $Response.ContentType = $ContentType
+    $Response.ContentLength64 = $bytes.Length
+    $Response.OutputStream.Write($bytes, 0, $bytes.Length)
+  } catch {
+    Write-Verbose "Response bereits gesendet oder geschlossen: $($_.Exception.Message)"
+  } finally {
+    try {
+      $Response.OutputStream.Close()
+    } catch {
+      # Stream bereits geschlossen
+    }
+  }
 }
 
 # ------------------------------------------------------------
