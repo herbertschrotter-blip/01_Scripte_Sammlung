@@ -1,19 +1,21 @@
 <#
 ManifestHint:
   ExportFunctions = @("Get-PhotoGalleryHTML")
-  Description     = "HTML/CSS/JS Template für Photo Gallery UI mit Viewer, Lightbox, Preview, Keyboard Navigation"
+  Description     = "HTML/CSS/JS Template für Photo & Video Gallery UI mit Viewer, Lightbox, Preview, Keyboard Navigation, Video-Player"
   Category        = "Media"
-  Tags            = @("HTML","Gallery","UI","Template","Lightbox","Viewer","Keyboard","Preview")
+  Tags            = @("HTML","Gallery","UI","Template","Lightbox","Viewer","Keyboard","Preview","Video","VideoPlayer")
   Dependencies    = @()
 
 Zweck:
-  - HTML/CSS/JS Template für PhotoFolder Gallery
+  - HTML/CSS/JS Template für PhotoFolder Gallery (Bilder + Videos)
   - Responsive Design mit Inter Font
-  - Lightbox Viewer mit Navigation
+  - Lightbox Viewer mit Navigation für Bilder und Videos
+  - Video-Player mit Play/Pause/Seek
   - Keyboard Shortcuts (Arrows, Space, Enter, Ctrl+A)
   - Preview-Modus mit 10 zufälligen Thumbnails
   - Collapse/Expand Ordner
   - Filter, Selection, Thumbnail-Größen
+  - Video-Icon auf Video-Thumbnails
 #>
 
 Set-StrictMode -Version Latest
@@ -45,7 +47,7 @@ function Get-PhotoGalleryHTML {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Foto-Ordner Review & Delete</title>
+<title>Foto & Video-Ordner Review & Delete</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
@@ -139,7 +141,7 @@ function Get-PhotoGalleryHTML {
   .previewRow{display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;}
   .previewRow.isHidden{display:none;}
 
-  img.t{
+  img.t, video.t{
     width:var(--thumb); height:var(--thumb);
     object-fit:cover;
     border-radius:var(--radius-sm);
@@ -147,12 +149,12 @@ function Get-PhotoGalleryHTML {
     cursor:zoom-in;
     transition:transform var(--transition), box-shadow var(--transition);
   }
-  img.t:hover{
+  img.t:hover, video.t:hover{
     transform:scale(1.04);
     box-shadow:0 4px 16px rgba(0,0,0,.12);
   }
 
-  /* --- Selektierbare Bilder --- */
+  /* --- Selektierbare Medien --- */
   .imgWrap{
     position:relative;
     display:inline-block;
@@ -173,7 +175,8 @@ function Get-PhotoGalleryHTML {
   .imgWrap .imgCb:checked{
     opacity:1;
   }
-  .imgWrap.selected img.t{
+  .imgWrap.selected img.t,
+  .imgWrap.selected video.t{
     outline:3px solid var(--c-danger);
     outline-offset:-3px;
     opacity:.75;
@@ -182,6 +185,25 @@ function Get-PhotoGalleryHTML {
     outline:2px solid var(--c-accent);
     outline-offset:2px;
     border-radius:var(--radius-sm);
+  }
+
+  /* --- Video Play Icon --- */
+  .playIcon{
+    position:absolute;
+    top:50%;
+    left:50%;
+    transform:translate(-50%, -50%);
+    width:48px;
+    height:48px;
+    background:rgba(0,0,0,.7);
+    border-radius:50%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:#fff;
+    font-size:20px;
+    pointer-events:none;
+    z-index:1;
   }
 
   /* --- Inputs --- */
@@ -291,6 +313,12 @@ function Get-PhotoGalleryHTML {
     border-radius:var(--radius);
     display:block;
     cursor:pointer;
+  }
+  #viewerVideo{
+    max-width:96vw;
+    max-height:96vh;
+    border-radius:var(--radius);
+    display:none;
   }
   #viewerX{
     position:absolute;
@@ -470,10 +498,11 @@ function Get-PhotoGalleryHTML {
   </form>
 
   <div id="viewer" onclick="closeViewer()">
-    <button id="viewerDel" type="button" onclick="event.stopPropagation(); viewerDelete()" title="Bild löschen">🗑️</button>
+    <button id="viewerDel" type="button" onclick="event.stopPropagation(); viewerDelete()" title="Medium löschen">🗑️</button>
     <div id="viewerInner" onclick="event.stopPropagation()">
       <button id="viewerX" type="button" onclick="closeViewer()">X</button>
       <img id="viewerImg" src="" title="Links klicken = zurück | Rechts klicken = vorwärts" />
+      <video id="viewerVideo" controls></video>
       <div id="viewerBar"><a id="viewerOpen" href="" target="_blank" rel="noopener">In neuem Tab öffnen</a></div>
     </div>
   </div>
@@ -486,6 +515,19 @@ function Get-PhotoGalleryHTML {
   </div>
 
 <script>
+// --- Video Detection ---
+function isVideo(src) {
+  return src.match(/\/videothumb\?path=/i);
+}
+
+function getOriginalMediaSrc(thumbSrc) {
+  if (isVideo(thumbSrc)) {
+    // /videothumb?path=xxx -> /img?path=xxx (Original-Video)
+    return thumbSrc.replace('/videothumb?', '/img?');
+  }
+  return thumbSrc;
+}
+
 // --- Thumbnail-Größen (persistiert) ---
 function applyThumbSize(mode){
   const px = (mode === "s") ? 90 : (mode === "l") ? 200 : 140;
@@ -538,7 +580,7 @@ function submitDelete(){
   let msg = "";
   if(folders.length > 0) msg += folders.length + " Ordner";
   if(folders.length > 0 && imgs.length > 0) msg += " und ";
-  if(imgs.length > 0) msg += imgs.length + " Bilder";
+  if(imgs.length > 0) msg += imgs.length + " Medien";
   msg += " löschen?";
 
   if(!confirm(msg)) return;
@@ -597,42 +639,63 @@ function unloadThumbs(container){
   requestAnimationFrame(step);
 }
 
+// --- Viewer Navigation State ---
 window.folderImages = window.folderImages || {};
-window.viewerState = { folderKey:null, urls:[], idx:0 };
+window.folderTypes = window.folderTypes || {};
+window.viewerState = { folderKey:null, urls:[], types:[], idx:0 };
 
 function openViewerBy(folderKey, idx){
   const urls = window.folderImages[folderKey] || [];
-  openViewerWith(folderKey, urls, idx);
+  const types = window.folderTypes[folderKey] || [];
+  openViewerWith(folderKey, urls, types, idx);
 }
 
-function openViewerWith(folderKey, urls, idx){
+function openViewerWith(folderKey, urls, types, idx){
   if (!urls.length) return;
 
   window.viewerState.folderKey = folderKey;
   window.viewerState.urls = urls;
+  window.viewerState.types = types;
   window.viewerState.idx = Math.max(0, Math.min(idx, urls.length - 1));
 
   const src = urls[window.viewerState.idx];
+  const currentType = types[window.viewerState.idx];
 
   const v = document.getElementById("viewer");
-  const img = document.getElementById("viewerImg");
+  const viewerImg = document.getElementById("viewerImg");
+  const viewerVideo = document.getElementById("viewerVideo");
   const a = document.getElementById("viewerOpen");
 
-  img.src = src;
-  a.href = src;
-  v.style.display = "flex";
+  if (currentType === 'video') {
+    // Video anzeigen
+    viewerImg.style.display = 'none';
+    viewerVideo.style.display = 'block';
+    viewerVideo.src = getOriginalMediaSrc(src);
+    viewerVideo.load();
+    viewerVideo.play().catch(() => {});
+    a.href = getOriginalMediaSrc(src);
+  } else {
+    // Bild anzeigen
+    viewerVideo.style.display = 'none';
+    viewerVideo.pause();
+    viewerVideo.src = '';
+    viewerImg.style.display = 'block';
+    viewerImg.src = src;
+    a.href = src;
+  }
 
-  preloadAround(urls, window.viewerState.idx, 5);
+  v.style.display = "flex";
+  preloadAround(urls, types, window.viewerState.idx, 5);
 }
 
 window._preloaded = window._preloaded || new Set();
 
-function preloadAround(urls, center, range){
+function preloadAround(urls, types, center, range){
   for(let offset = 1; offset <= range; offset++){
     const fwd = (center + offset) % urls.length;
     const bwd = (center - offset + urls.length) % urls.length;
-    preloadOne(urls[fwd]);
-    preloadOne(urls[bwd]);
+    if (types[fwd] !== 'video') preloadOne(urls[fwd]);
+    if (types[bwd] !== 'video') preloadOne(urls[bwd]);
   }
 }
 
@@ -647,29 +710,68 @@ function viewerPrev(){
   const st = window.viewerState;
   if (!st.urls.length) return;
   st.idx = (st.idx - 1 + st.urls.length) % st.urls.length;
-  const img = document.getElementById("viewerImg");
+  
+  const viewerImg = document.getElementById("viewerImg");
+  const viewerVideo = document.getElementById("viewerVideo");
   const a = document.getElementById("viewerOpen");
-  img.src = st.urls[st.idx];
-  a.href = st.urls[st.idx];
-  preloadAround(st.urls, st.idx, 3);
+  const currentType = st.types[st.idx];
+
+  if (currentType === 'video') {
+    viewerImg.style.display = 'none';
+    viewerVideo.style.display = 'block';
+    viewerVideo.src = getOriginalMediaSrc(st.urls[st.idx]);
+    viewerVideo.load();
+    viewerVideo.play().catch(() => {});
+    a.href = getOriginalMediaSrc(st.urls[st.idx]);
+  } else {
+    viewerVideo.style.display = 'none';
+    viewerVideo.pause();
+    viewerVideo.src = '';
+    viewerImg.style.display = 'block';
+    viewerImg.src = st.urls[st.idx];
+    a.href = st.urls[st.idx];
+  }
+  
+  preloadAround(st.urls, st.types, st.idx, 3);
 }
 
 function viewerNext(){
   const st = window.viewerState;
   if (!st.urls.length) return;
   st.idx = (st.idx + 1) % st.urls.length;
-  const img = document.getElementById("viewerImg");
+  
+  const viewerImg = document.getElementById("viewerImg");
+  const viewerVideo = document.getElementById("viewerVideo");
   const a = document.getElementById("viewerOpen");
-  img.src = st.urls[st.idx];
-  a.href = st.urls[st.idx];
-  preloadAround(st.urls, st.idx, 3);
+  const currentType = st.types[st.idx];
+
+  if (currentType === 'video') {
+    viewerImg.style.display = 'none';
+    viewerVideo.style.display = 'block';
+    viewerVideo.src = getOriginalMediaSrc(st.urls[st.idx]);
+    viewerVideo.load();
+    viewerVideo.play().catch(() => {});
+    a.href = getOriginalMediaSrc(st.urls[st.idx]);
+  } else {
+    viewerVideo.style.display = 'none';
+    viewerVideo.pause();
+    viewerVideo.src = '';
+    viewerImg.style.display = 'block';
+    viewerImg.src = st.urls[st.idx];
+    a.href = st.urls[st.idx];
+  }
+  
+  preloadAround(st.urls, st.types, st.idx, 3);
 }
 
 function closeViewer(){
   const v = document.getElementById("viewer");
-  const img = document.getElementById("viewerImg");
+  const viewerImg = document.getElementById("viewerImg");
+  const viewerVideo = document.getElementById("viewerVideo");
   v.style.display = "none";
-  img.src = "";
+  viewerImg.src = "";
+  viewerVideo.pause();
+  viewerVideo.src = "";
 }
 
 function urlToRel(src){
@@ -684,7 +786,7 @@ function viewerDelete(){
   if(!st.urls.length) return;
 
   const src = st.urls[st.idx];
-  const rel = urlToRel(src);
+  const rel = urlToRel(isVideo(src) ? getOriginalMediaSrc(src) : src);
   if(!rel) return;
 
   const params = new URLSearchParams();
@@ -698,11 +800,15 @@ function viewerDelete(){
   }).catch(() => {});
 
   st.urls.splice(st.idx, 1);
+  st.types.splice(st.idx, 1);
 
   if(window.folderImages[st.folderKey]){
     const fi = window.folderImages[st.folderKey];
     const fiIdx = fi.indexOf(src);
-    if(fiIdx >= 0) fi.splice(fiIdx, 1);
+    if(fiIdx >= 0) {
+      fi.splice(fiIdx, 1);
+      window.folderTypes[st.folderKey].splice(fiIdx, 1);
+    }
   }
 
   document.querySelectorAll(".imgCb").forEach(cb => {
@@ -730,13 +836,32 @@ function viewerDelete(){
   if(st.idx >= st.urls.length) st.idx = 0;
 
   const viewerImg = document.getElementById("viewerImg");
+  const viewerVideo = document.getElementById("viewerVideo");
   const viewerOpen = document.getElementById("viewerOpen");
   const newSrc = st.urls[st.idx];
-  viewerImg.src = "";
-  requestAnimationFrame(() => {
-    viewerImg.src = newSrc;
-    viewerOpen.href = newSrc;
-  });
+  const newType = st.types[st.idx];
+  
+  if (newType === 'video') {
+    viewerImg.style.display = 'none';
+    viewerVideo.style.display = 'block';
+    viewerVideo.src = '';
+    requestAnimationFrame(() => {
+      viewerVideo.src = getOriginalMediaSrc(newSrc);
+      viewerVideo.load();
+      viewerVideo.play().catch(() => {});
+      viewerOpen.href = getOriginalMediaSrc(newSrc);
+    });
+  } else {
+    viewerVideo.style.display = 'none';
+    viewerVideo.pause();
+    viewerVideo.src = '';
+    viewerImg.style.display = 'block';
+    viewerImg.src = "";
+    requestAnimationFrame(() => {
+      viewerImg.src = newSrc;
+      viewerOpen.href = newSrc;
+    });
+  }
 }
 
 document.getElementById("viewerImg").addEventListener("click", (e) => {
@@ -766,6 +891,8 @@ function ensurePreview(card){
   const data = preview.dataset.images || "";
   const urls = data.split("|").filter(Boolean);
   const rels = (preview.dataset.imagesRel || "").split("|").filter(Boolean);
+  const types = (preview.dataset.mediaTypes || "").split("|").filter(Boolean);
+  
   if (!urls.length){
     preview.dataset.previewLoaded = "1";
     return;
@@ -775,19 +902,24 @@ function ensurePreview(card){
 
   if (!window.folderImages[folderKey] || window.folderImages[folderKey].length === 0) {
     window.folderImages[folderKey] = urls;
+    window.folderTypes[folderKey] = types;
   }
 
   const sampleIdxs = pickRandomUnique(Array.from(urls.keys()), 10);
   const previewUrls = sampleIdxs.map(i => urls[i]);
+  const previewTypes = sampleIdxs.map(i => types[i]);
 
   window.previewImages = window.previewImages || {};
+  window.previewTypes = window.previewTypes || {};
   window.previewImages[folderKey] = previewUrls;
+  window.previewTypes[folderKey] = previewTypes;
 
   const frag = document.createDocumentFragment();
   sampleIdxs.forEach((idx) => {
     const src = urls[idx];
     const rel = rels[idx] || "";
-    const wrap = createImgWrap(src, rel, folderKey, idx, true);
+    const type = types[idx] || "image";
+    const wrap = createImgWrap(src, rel, type, folderKey, idx, true);
     frag.appendChild(wrap);
   });
 
@@ -853,11 +985,12 @@ function handleImgClick(ev, wrap){
   setFocus(wrap);
 }
 
-function createImgWrap(src, rel, folderKey, idx, isPreview){
+function createImgWrap(src, rel, type, folderKey, idx, isPreview){
   const wrap = document.createElement("div");
   wrap.className = "imgWrap";
   wrap.dataset.folderKey = folderKey;
   wrap.dataset.idx = idx;
+  wrap.dataset.mediaType = type;
   if(isPreview) wrap.dataset.preview = "1";
 
   const cb = document.createElement("input");
@@ -883,27 +1016,47 @@ function createImgWrap(src, rel, folderKey, idx, isPreview){
     ev.stopPropagation();
     if(isPreview){
       const pUrls = (window.previewImages || {})[folderKey] || [];
+      const pTypes = (window.previewTypes || {})[folderKey] || [];
       const pIdx = pUrls.indexOf(src);
-      openViewerWith(folderKey, pUrls, pIdx >= 0 ? pIdx : 0);
+      openViewerWith(folderKey, pUrls, pTypes, pIdx >= 0 ? pIdx : 0);
     } else {
       const all = window.folderImages[folderKey] || [src];
+      const allTypes = window.folderTypes[folderKey] || [type];
       const i = all.indexOf(src);
-      openViewerBy(folderKey, i >= 0 ? i : 0);
+      openViewerWith(folderKey, all, allTypes, i >= 0 ? i : 0);
     }
   });
 
   wrap.appendChild(cb);
   wrap.appendChild(img);
+
+  // Video-Icon hinzufügen
+  if (type === 'video') {
+    const playIcon = document.createElement("div");
+    playIcon.className = "playIcon";
+    playIcon.innerHTML = "▶";
+    wrap.appendChild(playIcon);
+  }
+
   return wrap;
 }
 
 document.addEventListener("keydown", (e) => {
   const viewer = document.getElementById("viewer");
+  const viewerVideo = document.getElementById("viewerVideo");
+  
   if(viewer.style.display === "flex"){
     if(e.key === "Escape") closeViewer();
     if(e.key === "ArrowLeft") viewerPrev();
     if(e.key === "ArrowRight") viewerNext();
     if(e.key === "Delete") viewerDelete();
+    
+    // Space = Play/Pause (nur bei Videos)
+    if(e.key === " " && viewerVideo.style.display === 'block'){
+      e.preventDefault();
+      if(viewerVideo.paused) viewerVideo.play();
+      else viewerVideo.pause();
+    }
     return;
   }
 
@@ -943,12 +1096,15 @@ document.addEventListener("keydown", (e) => {
   if(e.key === "Enter" && cur){
     e.preventDefault();
     const folderKey = cur.dataset.folderKey;
+    const mediaType = cur.dataset.mediaType || "image";
     const img = cur.querySelector("img.t");
     const src = img ? img.src : "";
+    
     if(cur.dataset.preview === "1"){
       const pUrls = (window.previewImages || {})[folderKey] || [];
+      const pTypes = (window.previewTypes || {})[folderKey] || [];
       const pIdx = pUrls.indexOf(src);
-      openViewerWith(folderKey, pUrls, pIdx >= 0 ? pIdx : 0);
+      openViewerWith(folderKey, pUrls, pTypes, pIdx >= 0 ? pIdx : 0);
     } else {
       const idx = parseInt(cur.dataset.idx, 10);
       openViewerBy(folderKey, idx);
@@ -1005,14 +1161,17 @@ function toggleFolder(btn){
   const data = thumbs.dataset.images || "";
   const urls = data.split("|").filter(Boolean);
   const rels = (thumbs.dataset.imagesRel || "").split("|").filter(Boolean);
+  const types = (thumbs.dataset.mediaTypes || "").split("|").filter(Boolean);
   const folderKey = card.getAttribute("data-path");
 
   window.folderImages[folderKey] = urls;
+  window.folderTypes[folderKey] = types;
 
   const frag = document.createDocumentFragment();
   urls.forEach((src, i) => {
     const rel = rels[i] || "";
-    const wrap = createImgWrap(src, rel, folderKey, i);
+    const type = types[i] || "image";
+    const wrap = createImgWrap(src, rel, type, folderKey, i);
     frag.appendChild(wrap);
   });
 

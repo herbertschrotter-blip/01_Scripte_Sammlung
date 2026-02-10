@@ -1,22 +1,25 @@
 <#
 ManifestHint:
   ExportFunctions = @()
-  Description     = "Lokale HTML-Übersicht für Bildordner (rekursiv), Ordner auswählen + löschen (Papierkorb), Ordner zuklappbar (ganze Zeile klickbar), im zugeklappten Zustand 10 zufällige Preview-Thumbs pro Ordner, beim Aufklappen werden alle Bilder geladen. Viewer mit Navigation (Pfeiltasten + Klick links/rechts). Beenden per X. /img liefert per Streaming."
+  Description     = "Lokale HTML-Übersicht für Bild- und Video-Ordner (rekursiv), Ordner auswählen + löschen (Papierkorb), Video-Thumbnails mit FFmpeg, Ordner zuklappbar (ganze Zeile klickbar), im zugeklappten Zustand 10 zufällige Preview-Thumbs pro Ordner, beim Aufklappen werden alle Medien geladen. Viewer mit Navigation (Pfeiltasten + Klick links/rechts) für Bilder und Videos. Beenden per X. /img und /videothumb liefern per Streaming."
   Category        = "Media"
-  Tags            = @("Photos","HTML","Gallery","Recursive","DeleteFolders","RecycleBin","HttpListener","Lightbox","Collapse","Shutdown","OnDemand","Preview10Random","ArrowKeys","NextPrev","Streaming")
-  Dependencies    = @("System.Net.HttpListener","System.Windows.Forms","Microsoft.VisualBasic")
+  Tags            = @("Photos","Videos","HTML","Gallery","Recursive","DeleteFolders","RecycleBin","HttpListener","Lightbox","Collapse","Shutdown","OnDemand","Preview10Random","ArrowKeys","NextPrev","Streaming","FFmpeg","VideoThumbnails")
+  Dependencies    = @("System.Net.HttpListener","System.Windows.Forms","Microsoft.VisualBasic","FFmpeg")
 
 Zweck:
   - Root wählen (Dialog, wenn -RootPath nicht gesetzt).
-  - Alle Unterordner scannen und Ordner listen, die Bilddateien enthalten.
+  - Alle Unterordner scannen und Ordner listen, die Bild- oder Videodateien enthalten.
+  - Video-Thumbnails automatisch mit FFmpeg generieren (in .thumbs Ordner) BEIM START.
   - Zugeklappt: pro Ordner 10 zufällige Preview-Thumbs immer sichtbar.
-  - Aufklappen: Preview ausblenden, alle Bilder on-demand laden.
+  - Aufklappen: Preview ausblenden, alle Medien on-demand laden.
   - Thumbnail klick -> großer Viewer im Browser (Overlay/Lightbox) + Navigation:
       -> Pfeiltasten Links/Rechts
       -> Klick linke Bildhälfte = zurück, rechte Bildhälfte = vorwärts
+      -> Videos abspielen mit HTML5 Video-Player
   - Ausgewählte Ordner löschen (Papierkorb oder HardDelete).
   - Tool per X in der HTML beenden (kein Strg+C).
-  - /img: Streaming statt ReadAllBytes (RAM-schonend).
+  - /img: Streaming für Bilder und Videos (RAM-schonend).
+  - /videothumb: On-Demand Video-Thumbnail-Generierung mit FFmpeg.
 
 Parameter:
   -RootPath   : Root-Ordner (optional; sonst Dialog)
@@ -49,13 +52,19 @@ $ProjectRoot = Split-Path -Parent $ScriptDir
 . (Join-Path $ProjectRoot "Lib\Lib_Http.ps1")
 . (Join-Path $ProjectRoot "Lib\Lib_FileSystem.ps1")
 . (Join-Path $ProjectRoot "Lib\Lib_FastScan.ps1")
+. (Join-Path $ProjectRoot "Lib\Lib_VideoThumbs.ps1")
 . (Join-Path $ProjectRoot "Lib\Lib_PhotoGallery_UI.ps1")
 . (Join-Path $ProjectRoot "Lib\Lib_Dialogs.ps1")
 
 # -----------------------------
 # Einstellungen
 # -----------------------------
-$ImageExt = @(".jpg",".jpeg",".png",".webp",".gif",".bmp",".tif",".tiff")
+$MediaExt = @(
+  # Bilder
+  ".jpg",".jpeg",".png",".webp",".gif",".bmp",".tif",".tiff",
+  # Videos
+  ".mp4",".mov",".avi",".mkv",".webm",".m4v",".wmv",".flv",".mpg",".mpeg",".3gp"
+)
 
 # Assembly einmal vorladen (nicht bei jedem Delete-Request)
 Add-Type -AssemblyName Microsoft.VisualBasic | Out-Null
@@ -85,9 +94,46 @@ if (-not (Test-Path -LiteralPath $RootPath -PathType Container)) {
 $RootFull = [System.IO.Path]::GetFullPath($RootPath)
 
 try {
-  Write-Host "Scanne Bildordner..."
-  $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt -UseCache
-  Write-Host "Fertig: $($Folders.Count) Ordner mit Bildern gefunden"
+  Write-Host "Scanne Bild- und Video-Ordner..."
+  $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache
+  Write-Host "Fertig: $($Folders.Count) Ordner mit Medien gefunden"
+  
+  # NEU: Video-Thumbnails pre-generieren
+  Write-Host "Generiere Video-Thumbnails (falls noch nicht vorhanden)..."
+  $videoCount = 0
+  $videoTotal = 0
+  $videoSkipped = 0
+  
+  foreach ($folder in $Folders) {
+    foreach ($mediaRel in $folder.ImagesRel) {
+      if (Test-IsVideoFile -Path $mediaRel) {
+        $videoTotal++
+        try {
+          $videoFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $mediaRel
+          
+          # Prüfe ob Thumbnail schon existiert
+          $thumbPath = Get-VideoThumbnailPath -VideoPath $videoFull
+          if (Test-Path -LiteralPath $thumbPath) {
+            $videoSkipped++
+            Write-Verbose "Thumbnail existiert bereits: $mediaRel"
+          } else {
+            Write-Host "  Erstelle Thumbnail: $mediaRel" -ForegroundColor Cyan
+            $thumb = New-VideoThumbnail -VideoPath $videoFull -Verbose:$false
+            if ($thumb) { 
+              $videoCount++ 
+            }
+          }
+        } catch {
+          Write-Warning "Fehler bei $mediaRel : $($_.Exception.Message)"
+        }
+      }
+    }
+  }
+  
+  if ($videoTotal -gt 0) {
+    Write-Host "Video-Thumbnails: $videoCount neu erstellt, $videoSkipped bereits vorhanden (von $videoTotal Videos gesamt)" -ForegroundColor Green
+  }
+  
 } catch {
   Write-Err "E030" "Scan fehlgeschlagen: $($_.Exception.Message)"
   return
@@ -105,8 +151,31 @@ function Build-CardRows {
     $rel = $f.RelPath
     $cnt = $f.ImgCount
 
-    $imgList = ($f.ImagesRel | ForEach-Object { "/img?path=$(UrlEncode($_))" }) -join "|"
-    $imgRelList = ($f.ImagesRel) -join "|"
+    # Bilder + Videos als URLs generieren
+    $imgList = @()
+    $imgRelList = @()
+    $mediaTypes = @()
+    
+    foreach ($mediaRel in $f.ImagesRel) {
+      $imgRelList += $mediaRel
+      
+      # Prüfen ob Video
+      $isVideo = Test-IsVideoFile -Path $mediaRel
+      
+      if ($isVideo) {
+        # Video-Thumbnail URL
+        $imgList += "/videothumb?path=$(UrlEncode($mediaRel))"
+        $mediaTypes += "video"
+      } else {
+        # Normales Bild URL
+        $imgList += "/img?path=$(UrlEncode($mediaRel))"
+        $mediaTypes += "image"
+      }
+    }
+    
+    $imgListStr = ($imgList) -join "|"
+    $imgRelListStr = ($imgRelList) -join "|"
+    $mediaTypesStr = ($mediaTypes) -join "|"
 
     [void]$rows.AppendLine(@"
 <div class="card" data-path="$(HtmlEncode($rel))">
@@ -118,10 +187,10 @@ function Build-CardRows {
   </div>
 
   <!-- Zugeklappt: 10 zufällige Preview-Thumbs -->
-  <div class="previewRow" data-preview-loaded="0" data-images="$(HtmlEncode($imgList))" data-images-rel="$(HtmlEncode($imgRelList))"></div>
+  <div class="previewRow" data-preview-loaded="0" data-images="$(HtmlEncode($imgListStr))" data-images-rel="$(HtmlEncode($imgRelListStr))" data-media-types="$(HtmlEncode($mediaTypesStr))"></div>
 
-  <!-- Aufgeklappt: alle Bilder (on-demand) -->
-  <div class="thumbs isCollapsed" data-loaded="0" data-images="$(HtmlEncode($imgList))" data-images-rel="$(HtmlEncode($imgRelList))"></div>
+  <!-- Aufgeklappt: alle Medien (on-demand) -->
+  <div class="thumbs isCollapsed" data-loaded="0" data-images="$(HtmlEncode($imgListStr))" data-images-rel="$(HtmlEncode($imgRelListStr))" data-media-types="$(HtmlEncode($mediaTypesStr))"></div>
 </div>
 "@)
   }
@@ -189,8 +258,33 @@ try {
         
         if ($newRoot -and (Test-Path -LiteralPath $newRoot -PathType Container)) {
           $RootFull = [System.IO.Path]::GetFullPath($newRoot)
-          $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt -UseCache
+          
+          # Scan
           Write-Host ("[INFO] Root gewechselt: {0}" -f $RootFull)
+          $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache
+          
+          # Video-Thumbnails pre-generieren
+          Write-Host "Generiere Video-Thumbnails..."
+          $videoCount = 0
+          foreach ($folder in $Folders) {
+            foreach ($mediaRel in $folder.ImagesRel) {
+              if (Test-IsVideoFile -Path $mediaRel) {
+                try {
+                  $videoFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $mediaRel
+                  $thumbPath = Get-VideoThumbnailPath -VideoPath $videoFull
+                  if (-not (Test-Path -LiteralPath $thumbPath)) {
+                    $thumb = New-VideoThumbnail -VideoPath $videoFull -Verbose:$false
+                    if ($thumb) { $videoCount++ }
+                  }
+                } catch {
+                  Write-Warning "Fehler bei $mediaRel : $($_.Exception.Message)"
+                }
+              }
+            }
+          }
+          if ($videoCount -gt 0) {
+            Write-Host "Video-Thumbnails erstellt: $videoCount"
+          }
         }
 
         Send-ResponseText -Response $res -Text "OK" -StatusCode 200
@@ -217,7 +311,7 @@ try {
           continue
         }
 
-        # Streaming statt ReadAllBytes (RAM-schonend)
+        # Streaming (für Bilder UND Videos)
         $ct = Get-ContentTypeByExt -Path $full
         $res.StatusCode = 200
         $res.ContentType = $ct
@@ -232,6 +326,63 @@ try {
         finally {
           $fs.Close()
           $res.OutputStream.Close()
+        }
+        continue
+      }
+
+      if ($path -eq "/videothumb" -and $req.HttpMethod -eq "GET") {
+        $q = $req.QueryString["path"]
+        if ([string]::IsNullOrWhiteSpace($q)) {
+          Send-ResponseText -Response $res -Text "Missing path" -StatusCode 400
+          continue
+        }
+
+        $rel = UrlDecode($q)
+        try {
+          $videoFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $rel
+        } catch {
+          Send-ResponseText -Response $res -Text "Forbidden" -StatusCode 403
+          continue
+        }
+
+        if (-not (Test-Path -LiteralPath $videoFull -PathType Leaf)) {
+          Send-ResponseText -Response $res -Text "Video not found" -StatusCode 404
+          continue
+        }
+
+        # Video-Thumbnail holen (sollte schon existieren durch Pre-Generate)
+        try {
+          $thumbPath = Get-VideoThumbnailPath -VideoPath $videoFull
+          
+          # Falls doch nicht vorhanden, jetzt erstellen
+          if (-not (Test-Path -LiteralPath $thumbPath)) {
+            Write-Host "[INFO] Thumbnail on-demand erstellen: $rel" -ForegroundColor Yellow
+            $thumbPath = New-VideoThumbnail -VideoPath $videoFull
+          }
+          
+          if (-not $thumbPath -or -not (Test-Path -LiteralPath $thumbPath)) {
+            Send-ResponseText -Response $res -Text "Thumbnail generation failed" -StatusCode 500
+            continue
+          }
+          
+          # Thumbnail als Bild ausliefern
+          $ct = "image/jpeg"
+          $res.StatusCode = 200
+          $res.ContentType = $ct
+
+          $fi = [System.IO.FileInfo]::new($thumbPath)
+          $res.ContentLength64 = $fi.Length
+
+          $fs = [System.IO.File]::Open($thumbPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+          try {
+            $fs.CopyTo($res.OutputStream)
+          }
+          finally {
+            $fs.Close()
+            $res.OutputStream.Close()
+          }
+        } catch {
+          Send-ResponseText -Response $res -Text "Thumbnail error: $($_.Exception.Message)" -StatusCode 500
         }
         continue
       }
@@ -305,7 +456,7 @@ try {
           }
         }
 
-        # Bilder verschieben
+        # Medien verschieben
         foreach ($relImg in $selectedImgs) {
           try {
             $imgFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $relImg
@@ -328,7 +479,7 @@ try {
               $ok++
             } else {
               $fail++
-              $errors += "E050 Bild nicht gefunden: $relImg"
+              $errors += "E050 Medium nicht gefunden: $relImg"
             }
           } catch {
             $fail++
@@ -336,7 +487,7 @@ try {
           }
         }
 
-        $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt -UseCache
+        $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache
 
         $msg = "Verschoben: OK=$ok | FAIL=$fail"
         if ($errors.Count -gt 0) {
@@ -364,7 +515,7 @@ try {
           else { $selectedFolders = @($form["folder"]) }
         }
 
-        # Bilder sammeln
+        # Medien sammeln
         $selectedImgs = @()
         if ($form.ContainsKey("img")) {
           if ($form["img"] -is [System.Collections.IList]) { $selectedImgs = @($form["img"]) }
@@ -400,7 +551,7 @@ try {
           # Assembly für FileSystem laden
           Add-Type -AssemblyName Microsoft.VisualBasic | Out-Null
 
-          # --- Bilder nach Ordner gruppieren (für schnelleres Löschen) ---
+          # --- Medien nach Ordner gruppieren (für schnelleres Löschen) ---
           $imgsByFolder = @{}
           foreach ($relImg in $SelImgs) {
             try {
@@ -417,7 +568,7 @@ try {
             }
           }
 
-          # Bilder GRUPPIERT löschen (alle Bilder eines Ordners auf einmal)
+          # Medien GRUPPIERT löschen (alle Medien eines Ordners auf einmal)
           foreach ($folderRel in $imgsByFolder.Keys) {
             $imgFiles = $imgsByFolder[$folderRel]
             
