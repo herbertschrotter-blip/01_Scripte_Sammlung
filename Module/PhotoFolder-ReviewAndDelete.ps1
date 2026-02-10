@@ -908,7 +908,7 @@ try {
             }
           }
 
-          # Medien GRUPPIERT löschen (alle Medien eines Ordners auf einmal)
+# Medien GRUPPIERT löschen (alle Medien eines Ordners auf einmal)
           foreach ($folderRel in $imgsByFolder.Keys) {
             $imgFiles = $imgsByFolder[$folderRel]
             
@@ -917,17 +917,55 @@ try {
               foreach ($imgFull in $imgFiles) {
                 try {
                   if (Test-Path -LiteralPath $imgFull -PathType Leaf) {
+                    # .thumbs auch löschen (Video-Thumbnails)
+                    $dir = Split-Path -Parent $imgFull
+                    $filename = Split-Path -Leaf $imgFull
+                    $thumbsDir = Join-Path $dir ".thumbs"
+                    
+                    if (Test-Path -LiteralPath $thumbsDir) {
+                      # Statisches Thumbnail
+                      $thumbFile = Join-Path $thumbsDir "$filename.jpg"
+                      if (Test-Path -LiteralPath $thumbFile) {
+                        Remove-Item -LiteralPath $thumbFile -Force -ErrorAction SilentlyContinue
+                      }
+                      
+                      # Konvertiertes H.264 Video
+                      $h264File = Join-Path $thumbsDir ([System.IO.Path]::GetFileNameWithoutExtension($filename) + "_h264.mp4")
+                      if (Test-Path -LiteralPath $h264File) {
+                        Remove-Item -LiteralPath $h264File -Force -ErrorAction SilentlyContinue
+                      }
+                    }
+                    
                     Remove-Item -LiteralPath $imgFull -Force
                   }
                 } catch {
                   Write-Warning "Fehler beim Löschen von ${imgFull}: $($_.Exception.Message)"
                 }
-              }
-            } else {
+              }              
+} else {
               # Papierkorb: gruppiert löschen (schneller)
               foreach ($imgFull in $imgFiles) {
                 try {
                   if (Test-Path -LiteralPath $imgFull -PathType Leaf) {
+                    # .thumbs auch löschen (Video-Thumbnails)
+                    $dir = Split-Path -Parent $imgFull
+                    $filename = Split-Path -Leaf $imgFull
+                    $thumbsDir = Join-Path $dir ".thumbs"
+                    
+                    if (Test-Path -LiteralPath $thumbsDir) {
+                      # Statisches Thumbnail
+                      $thumbFile = Join-Path $thumbsDir "$filename.jpg"
+                      if (Test-Path -LiteralPath $thumbFile) {
+                        Remove-Item -LiteralPath $thumbFile -Force -ErrorAction SilentlyContinue
+                      }
+                      
+                      # Konvertiertes H.264 Video
+                      $h264File = Join-Path $thumbsDir ([System.IO.Path]::GetFileNameWithoutExtension($filename) + "_h264.mp4")
+                      if (Test-Path -LiteralPath $h264File) {
+                        Remove-Item -LiteralPath $h264File -Force -ErrorAction SilentlyContinue
+                      }
+                    }
+                    
                     [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
                       $imgFull,
                       [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
@@ -938,17 +976,26 @@ try {
                   Write-Warning "Fehler beim Löschen von ${imgFull}: $($_.Exception.Message)"
                 }
               }
-            }
+            }            
           }
 
-          # Ordner löschen
+# Ordner löschen
           foreach ($relFolder in $SelFolders) {
             try {
+              # .thumbs Ordner VORHER löschen
+              $folderFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $relFolder
+              $thumbsDir = Join-Path $folderFull ".thumbs"
+              
+              if (Test-Path -LiteralPath $thumbsDir) {
+                Write-Host "[BG-DEL] Lösche .thumbs: $thumbsDir" -ForegroundColor DarkGray
+                Remove-Item -LiteralPath $thumbsDir -Recurse -Force -ErrorAction SilentlyContinue
+              }
+              
               Delete-FolderSafe -RootFull $RootFull -RelFolder $relFolder -HardDelete:$DoHardDelete
             } catch {
               Write-Warning "Fehler beim Löschen von Ordner ${relFolder}: $($_.Exception.Message)"
             }
-          }
+          }          
         })
 
         # Parameter übergeben
