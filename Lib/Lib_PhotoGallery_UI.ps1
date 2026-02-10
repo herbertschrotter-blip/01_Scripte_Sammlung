@@ -617,19 +617,43 @@ function submitDelete(){
   folders.forEach(cb => params.append("folder", cb.value));
   imgs.forEach(cb => params.append("img", cb.dataset.rel));
 
-  fetch("/delete", {
+fetch("/delete", {
     method: "POST",
     headers: {"Content-Type": "application/x-www-form-urlencoded"},
     body: params.toString()
   })
-  .then(r => r.json())
+  .then(r => {
+    console.log("Delete Response Status:", r.status);
+    return r.json();
+  })
   .then(data => {
+    console.log("Delete Response Data:", data);
     overlay.classList.remove("active");
-    window.location.reload();
+    
+    // Cache leeren
+    if ('caches' in window) {
+      caches.keys().then(names => {
+        names.forEach(name => caches.delete(name));
+      });
+    }
+    
+    // Hard Reload mit Timestamp
+    setTimeout(() => {
+      window.location.href = window.location.pathname + "?t=" + Date.now();
+    }, 500);
   })
   .catch(err => {
+    console.error("Delete Error:", err);
     overlay.classList.remove("active");
-    alert("Fehler: " + err);
+    
+    if(confirm("Fehler beim Löschen: " + err + "\n\nSeite trotzdem neu laden?")) {
+      if ('caches' in window) {
+        caches.keys().then(names => {
+          names.forEach(name => caches.delete(name));
+        });
+      }
+      window.location.href = window.location.pathname + "?t=" + Date.now();
+    }
   });
 }
 
@@ -703,9 +727,13 @@ function openViewerWith(folderKey, urls, types, idx){
     viewerVideo.style.display = 'none';
     viewerVideo.pause();
     viewerVideo.src = '';
+const cacheBust = "?v=" + Date.now();
+    const imgSrc = src.includes("?") ? src + "&v=" + Date.now() : src + cacheBust;
+    
     viewerImg.style.display = 'block';
-    viewerImg.src = src;
+    viewerImg.src = imgSrc;
     a.href = src;
+
     vlcBtn.style.display = 'none';  // ← NEU: VLC-Button verstecken
   }
 
@@ -752,9 +780,12 @@ if (currentType === 'video') {
     viewerVideo.style.display = 'none';
     viewerVideo.pause();
     viewerVideo.src = '';
+const cacheBust = "?v=" + Date.now();
+    const imgSrc = st.urls[st.idx].includes("?") ? st.urls[st.idx] + "&v=" + Date.now() : st.urls[st.idx] + cacheBust;
+    
     viewerImg.style.display = 'block';
-    viewerImg.src = st.urls[st.idx];
-    a.href = st.urls[st.idx];
+    viewerImg.src = imgSrc;
+    a.href = st.urls[st.idx];    
   }
   
   preloadAround(st.urls, st.types, st.idx, 3);
@@ -781,9 +812,12 @@ if (currentType === 'video') {
     viewerVideo.style.display = 'none';
     viewerVideo.pause();
     viewerVideo.src = '';
+const cacheBust = "?v=" + Date.now();
+    const imgSrc = st.urls[st.idx].includes("?") ? st.urls[st.idx] + "&v=" + Date.now() : st.urls[st.idx] + cacheBust;
+    
     viewerImg.style.display = 'block';
-    viewerImg.src = st.urls[st.idx];
-    a.href = st.urls[st.idx];
+    viewerImg.src = imgSrc;
+    a.href = st.urls[st.idx];    
   }
   
   preloadAround(st.urls, st.types, st.idx, 3);
@@ -880,12 +914,15 @@ function viewerDelete(){
     viewerVideo.style.display = 'none';
     viewerVideo.pause();
     viewerVideo.src = '';
+const cacheBust = "?v=" + Date.now();
+    const imgSrc = newSrc.includes("?") ? newSrc + "&v=" + Date.now() : newSrc + cacheBust;
+    
     viewerImg.style.display = 'block';
     viewerImg.src = "";
     requestAnimationFrame(() => {
-      viewerImg.src = newSrc;
+      viewerImg.src = imgSrc;
       viewerOpen.href = newSrc;
-    });
+    });    
   }
 }
 
@@ -1028,10 +1065,13 @@ function createImgWrap(src, rel, type, folderKey, idx, isPreview){
   });
   cb.addEventListener("click", (ev) => ev.stopPropagation());
 
+const cacheBust = "?v=" + Date.now();
+  const imgSrc = src.includes("?") ? src + "&v=" + Date.now() : src + cacheBust;
+  
   const img = document.createElement("img");
   img.className = "t";
   img.loading = "lazy";
-  img.src = src;
+  img.src = imgSrc;
 
   img.addEventListener("click", (ev) => {
     handleImgClick(ev, wrap);
@@ -1213,7 +1253,20 @@ function shutdown(){
 
 function changeRoot(){
   fetch("/changeroot", { method:"POST" })
-    .then(r => { if(r.ok) window.location.reload(); })
+    .then(r => r.json())
+    .then(data => {
+      if(data.cancelled) return;
+      
+      // Cache leeren
+      if ('caches' in window) {
+        caches.keys().then(names => {
+          names.forEach(name => caches.delete(name));
+        });
+      }
+      
+      // Hard Reload mit Timestamp
+      window.location.href = window.location.pathname + "?t=" + Date.now();
+    })
     .catch(e => alert("Fehler: " + e));
 }
 
@@ -1239,22 +1292,47 @@ function submitMove(){
   folders.forEach(cb => params.append("folder", cb.value));
   imgs.forEach(cb => params.append("img", cb.dataset.rel));
 
-  fetch("/move", {
+fetch("/move", {
     method: "POST",
     headers: {"Content-Type": "application/x-www-form-urlencoded"},
     body: params.toString()
   })
-  .then(r => r.json())
+  .then(r => {
+    console.log("Move Response Status:", r.status);
+    return r.json();
+  })
   .then(data => {
+    console.log("Move Response Data:", data);
     overlay.classList.remove("active");
     if(data.cancelled) return;
-    window.location.reload();
+    
+    // Cache leeren
+    if ('caches' in window) {
+      caches.keys().then(names => {
+        names.forEach(name => caches.delete(name));
+      });
+    }
+    
+    // Hard Reload mit Timestamp
+    setTimeout(() => {
+      window.location.href = window.location.pathname + "?t=" + Date.now();
+    }, 500);
   })
   .catch(err => {
+    console.error("Move Error:", err);
     overlay.classList.remove("active");
-    alert("Fehler: " + err);
+    
+    if(confirm("Fehler beim Verschieben: " + err + "\n\nSeite trotzdem neu laden?")) {
+      if ('caches' in window) {
+        caches.keys().then(names => {
+          names.forEach(name => caches.delete(name));
+        });
+      }
+      window.location.href = window.location.pathname + "?t=" + Date.now();
+    }
   });
 }
+
 // --- Lazy Video Conversion ---
 function checkAndConvertVideo(videoRel, videoElement, linkElement) {
   // Loading-Overlay erstellen

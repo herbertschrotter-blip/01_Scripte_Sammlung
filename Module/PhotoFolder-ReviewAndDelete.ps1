@@ -124,9 +124,9 @@ if ($archiveCheck.HasArchives) {
 
 try {
   Write-Host "Scanne Bild- und Video-Ordner..."
-  $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache
-  Write-Host "Fertig: $($Folders.Count) Ordner mit Medien gefunden"
-  
+  $script:Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache
+  Write-Host "Fertig: $($script:Folders.Count) Ordner mit Medien gefunden"
+
   # NEU: Video-Thumbnails pre-generieren
   Write-Host "Generiere Video-Thumbnails (falls noch nicht vorhanden)..."
   
@@ -354,9 +354,9 @@ try {
     $path = $req.Url.AbsolutePath.ToLowerInvariant()
 
     try {
-      if ($path -eq "/" -and $req.HttpMethod -eq "GET") {
-        $cardRows = Build-CardRows -Folders $Folders
-        $html = Get-PhotoGalleryHTML -RootPath (HtmlEncode($RootFull)) -CardRowsHTML $cardRows -HardDelete $HardDelete
+if ($path -eq "/" -and $req.HttpMethod -eq "GET") {
+        $cardRows = Build-CardRows -Folders $script:Folders
+        $html = Get-PhotoGalleryHTML -RootPath (HtmlEncode($RootFull)) -CardRowsHTML $cardRows -HardDelete $HardDelete       
         Send-ResponseHtml -Response $res -Html $html
         continue
       }
@@ -400,9 +400,8 @@ try {
           }
           
           # Scan
-          Write-Host ("[INFO] Root gewechselt: {0}" -f $RootFull)
-          $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache
-          
+Write-Host ("[INFO] Root gewechselt: {0}" -f $RootFull)
+          $script:Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache          
           # Video-Thumbnails pre-generieren (parallel wie beim Start)
           Write-Host "Generiere Video-Thumbnails..."
           
@@ -827,7 +826,7 @@ try {
           }
         }
 
-        $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache
+       $script:Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache
 
         $msg = "Verschoben: OK=$ok | FAIL=$fail"
         if ($errors.Count -gt 0) {
@@ -1005,9 +1004,28 @@ try {
         $null = $ps.AddParameter("SelImgs", $delImgs)
         $null = $ps.AddParameter("LibCode", $libFileSystemContent)
 
-        $null = $ps.BeginInvoke()
+# WARTEN bis Background-Job fertig ist
+        $handle = $ps.BeginInvoke()
+        $timeout = [TimeSpan]::FromSeconds(10)
+        $finished = $handle.AsyncWaitHandle.WaitOne($timeout)
+        
+        if ($finished) {
+          Write-Host "[DELETE] Background-Job fertig - scanne neu..." -ForegroundColor Green
+          
+          # NEU SCANNEN mit script: Scope!
+          $script:Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache
+          
+          Write-Host "[DELETE] Neu gescannt: $($script:Folders.Count) Ordner" -ForegroundColor Green
+        } else {
+          Write-Warning "[DELETE] Timeout - Background-Job dauert zu lange"
+        }
+        
         continue
       }
+
+# Warte kurz und scanne neu
+        Start-Sleep -Milliseconds 500
+        $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache
 
       Send-ResponseText -Response $res -Text "Not found" -StatusCode 404
     } catch {
