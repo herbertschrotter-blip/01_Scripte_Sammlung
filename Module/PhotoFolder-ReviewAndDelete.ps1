@@ -48,7 +48,7 @@ $ProjectRoot = Split-Path -Parent $ScriptDir
 . (Join-Path $ProjectRoot "Lib\Lib_Web.ps1")
 . (Join-Path $ProjectRoot "Lib\Lib_Index.ps1")
 . (Join-Path $ProjectRoot "Lib\Lib_PhotoGallery_UI.ps1")
-
+. (Join-Path $ProjectRoot "Lib\Lib_Dialogs.ps1")
 # -----------------------------
 # Einstellungen
 # -----------------------------
@@ -66,18 +66,12 @@ function Write-Err {
 # Root per Dialog (wenn nicht übergeben)
 # -----------------------------
 if ([string]::IsNullOrWhiteSpace($RootPath)) {
-  Add-Type -AssemblyName System.Windows.Forms | Out-Null
-  $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-  $dlg.Description = "Root-Ordner auswählen"
-  $dlg.ShowNewFolderButton = $false
-
-  if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK -or
-      [string]::IsNullOrWhiteSpace($dlg.SelectedPath)) {
+  $RootPath = Show-FolderDialog -Description "Root-Ordner auswählen" -ShowNewFolderButton $false -TopMost $true
+  
+  if (-not $RootPath) {
     Write-Err "E010" "Kein Root-Ordner ausgewählt"
     return
   }
-
-  $RootPath = $dlg.SelectedPath
 }
 
 if (-not (Test-Path -LiteralPath $RootPath -PathType Container)) {
@@ -185,37 +179,18 @@ try {
         continue
       }
 
-      if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
-        $dlgRoot = New-Object System.Windows.Forms.FolderBrowserDialog
-        $dlgRoot.Description = "Neuen Root-Ordner auswählen"
-        $dlgRoot.ShowNewFolderButton = $false
+if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
+  $newRoot = Show-FolderDialog -Description "Neuen Root-Ordner auswählen" -ShowNewFolderButton $false -TopMost $true
+  
+  if ($newRoot -and (Test-Path -LiteralPath $newRoot -PathType Container)) {
+    $RootFull = [System.IO.Path]::GetFullPath($newRoot)
+    $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt
+    Write-Host ("[INFO] Root gewechselt: {0}" -f $RootFull)
+  }
 
-        # Dummy-Form als Owner, damit der Dialog im Vordergrund erscheint
-        $owner = New-Object System.Windows.Forms.Form
-        $owner.TopMost = $true
-        $owner.StartPosition = "Manual"
-        $owner.Location = New-Object System.Drawing.Point(-9999,-9999)
-        $owner.Size = New-Object System.Drawing.Size(1,1)
-        $owner.Show()
-        $owner.BringToFront()
-
-        $result = $dlgRoot.ShowDialog($owner)
-        $owner.Close()
-        $owner.Dispose()
-
-        if ($result -eq [System.Windows.Forms.DialogResult]::OK -and
-            -not [string]::IsNullOrWhiteSpace($dlgRoot.SelectedPath) -and
-            (Test-Path -LiteralPath $dlgRoot.SelectedPath -PathType Container)) {
-
-          $RootFull = [System.IO.Path]::GetFullPath($dlgRoot.SelectedPath)
-          $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt
-          Write-Host ("[INFO] Root gewechselt: {0}" -f $RootFull)
-        }
-
-        Send-ResponseText -Response $res -Text "OK" -StatusCode 200
-        continue
-      }
-
+  Send-ResponseText -Response $res -Text "OK" -StatusCode 200
+  continue
+}
       if ($path -eq "/img" -and $req.HttpMethod -eq "GET") {
         $q = $req.QueryString["path"]
         if ([string]::IsNullOrWhiteSpace($q)) {
@@ -276,32 +251,14 @@ try {
           continue
         }
 
-        # Zielordner per Dialog wählen (im Vordergrund)
-        $dlgMove = New-Object System.Windows.Forms.FolderBrowserDialog
-        $dlgMove.Description = "Zielordner für Verschieben auswählen"
-        $dlgMove.ShowNewFolderButton = $true
+# Zielordner per Dialog wählen
+$destDir = Show-FolderDialog -Description "Zielordner für Verschieben auswählen" -ShowNewFolderButton $true -TopMost $true
 
-        $owner = New-Object System.Windows.Forms.Form
-        $owner.TopMost = $true
-        $owner.StartPosition = "Manual"
-        $owner.Location = New-Object System.Drawing.Point(-9999,-9999)
-        $owner.Size = New-Object System.Drawing.Size(1,1)
-        $owner.Show()
-        $owner.BringToFront()
-
-        $result = $dlgMove.ShowDialog($owner)
-        $owner.Close()
-        $owner.Dispose()
-
-        if ($result -ne [System.Windows.Forms.DialogResult]::OK -or
-            [string]::IsNullOrWhiteSpace($dlgMove.SelectedPath)) {
-          $json = @{ cancelled = $true; msg = "Abgebrochen" } | ConvertTo-Json -Compress
-          Send-ResponseText -Response $res -Text $json -StatusCode 200 -ContentType "application/json; charset=utf-8"
-          continue
-        }
-
-        $destDir = $dlgMove.SelectedPath
-        if (-not (Test-Path -LiteralPath $destDir -PathType Container)) {
+if (-not $destDir) {
+  $json = @{ cancelled = $true; msg = "Abgebrochen" } | ConvertTo-Json -Compress
+  Send-ResponseText -Response $res -Text $json -StatusCode 200 -ContentType "application/json; charset=utf-8"
+  continue
+}        if (-not (Test-Path -LiteralPath $destDir -PathType Container)) {
           $json = @{ error = "Zielordner existiert nicht" } | ConvertTo-Json -Compress
           Send-ResponseText -Response $res -Text $json -StatusCode 400 -ContentType "application/json; charset=utf-8"
           continue
