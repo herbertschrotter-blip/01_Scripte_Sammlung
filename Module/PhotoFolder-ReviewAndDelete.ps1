@@ -1,9 +1,9 @@
 <#
 ManifestHint:
   ExportFunctions = @()
-  Description     = "Lokale HTML-Übersicht für Bild- und Video-Ordner (rekursiv), Ordner auswählen + löschen (Papierkorb), Video-Thumbnails mit FFmpeg, Video-Metadaten-Anzeige, Ordner zuklappbar (ganze Zeile klickbar), im zugeklappten Zustand 10 zufällige Preview-Thumbs pro Ordner, beim Aufklappen werden alle Medien geladen. Viewer mit Navigation (Pfeiltasten + Klick links/rechts) für Bilder und Videos. Beenden per X. /img und /videothumb liefern per Streaming."
+  Description     = "Lokale HTML-Übersicht für Bild- und Video-Ordner (rekursiv), Ordner auswählen + löschen (Papierkorb), Video-Thumbnails mit FFmpeg, Video-Metadaten-Anzeige, Lazy Video Conversion, Ordner zuklappbar (ganze Zeile klickbar), im zugeklappten Zustand 10 zufällige Preview-Thumbs pro Ordner, beim Aufklappen werden alle Medien geladen. Viewer mit Navigation (Pfeiltasten + Klick links/rechts) für Bilder und Videos. Beenden per X. /img und /videothumb liefern per Streaming."
   Category        = "Media"
-  Tags            = @("Photos","Videos","HTML","Gallery","Recursive","DeleteFolders","RecycleBin","HttpListener","Lightbox","Collapse","Shutdown","OnDemand","Preview10Random","ArrowKeys","NextPrev","Streaming","FFmpeg","VideoThumbnails","VideoMetadata","BrowserCompatibility")
+  Tags            = @("Photos","Videos","HTML","Gallery","Recursive","DeleteFolders","RecycleBin","HttpListener","Lightbox","Collapse","Shutdown","OnDemand","Preview10Random","ArrowKeys","NextPrev","Streaming","FFmpeg","VideoThumbnails","VideoMetadata","BrowserCompatibility","LazyConversion")
   Dependencies    = @("System.Net.HttpListener","System.Windows.Forms","Microsoft.VisualBasic","FFmpeg")
 
 Zweck:
@@ -11,6 +11,7 @@ Zweck:
   - Alle Unterordner scannen und Ordner listen, die Bild- oder Videodateien enthalten.
   - Video-Thumbnails automatisch mit FFmpeg generieren (in .thumbs Ordner) BEIM START mit Parallel-Processing.
   - Video-Metadaten auslesen (Codec, Format, Auflösung, Dauer, Browser-Kompatibilität).
+  - Lazy Video Conversion: DivX/XviD/alte Codecs zu H.264 beim ersten Abspielen.
   - Zugeklappt: pro Ordner 10 zufällige Preview-Thumbs immer sichtbar.
   - Aufklappen: Preview ausblenden, alle Medien on-demand laden.
   - Thumbnail klick -> großer Viewer im Browser (Overlay/Lightbox) + Navigation:
@@ -19,8 +20,9 @@ Zweck:
       -> Videos abspielen mit HTML5 Video-Player
   - Ausgewählte Ordner löschen (Papierkorb oder HardDelete).
   - Tool per X in der HTML beenden (kein Strg+C).
-  - /img: Streaming für Bilder und Videos (RAM-schonend).
+  - /img: Streaming für Bilder und Videos (RAM-schonend) mit Range-Support.
   - /videothumb: On-Demand Video-Thumbnail-Generierung mit FFmpeg.
+  - /videoconvert: Lazy H.264 Conversion für inkompatible Codecs.
 
 Parameter:
   -RootPath   : Root-Ordner (optional; sonst Dialog)
@@ -348,7 +350,7 @@ try {
         $res.OutputStream.Close()
         continue
       }
-      
+
       if ($path -eq "/openrecyclebin" -and $req.HttpMethod -eq "POST") {
         Start-Process "explorer.exe" -ArgumentList "shell:RecycleBinFolder"
         Send-ResponseText -Response $res -Text "OK" -StatusCode 200
@@ -452,21 +454,70 @@ try {
           continue
         }
 
-        # Streaming (für Bilder UND Videos)
+        # Content-Type ermitteln
         $ct = Get-ContentTypeByExt -Path $full
-        $res.StatusCode = 200
-        $res.ContentType = $ct
-
         $fi = [System.IO.FileInfo]::new($full)
-        $res.ContentLength64 = $fi.Length
+        $fileSize = $fi.Length
 
-        $fs = [System.IO.File]::Open($full, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-        try {
-          $fs.CopyTo($res.OutputStream)
-        }
-        finally {
-          $fs.Close()
-          $res.OutputStream.Close()
+        # Range Request Support (für Video-Spulen)
+        $rangeHeader = $req.Headers["Range"]
+        
+        if ($rangeHeader -and $rangeHeader -match "bytes=(\d+)-(\d*)") {
+          $rangeStart = [long]$matches[1]
+          $rangeEnd = if ($matches[2]) { [long]$matches[2] } else { $fileSize - 1 }
+          
+          # Range validieren
+          if ($rangeStart -ge $fileSize) {
+            $res.StatusCode = 416
+            $res.AddHeader("Content-Range", "bytes */$fileSize")
+            $res.OutputStream.Close()
+            continue
+          }
+          
+          $rangeEnd = [Math]::Min($rangeEnd, $fileSize - 1)
+          $contentLength = $rangeEnd - $rangeStart + 1
+          
+          # Partial Content Response
+          $res.StatusCode = 206
+          $res.ContentType = $ct
+          $res.ContentLength64 = $contentLength
+          $res.AddHeader("Content-Range", "bytes $rangeStart-$rangeEnd/$fileSize")
+          $res.AddHeader("Accept-Ranges", "bytes")
+          
+          $fs = [System.IO.File]::Open($full, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+          try {
+            $fs.Seek($rangeStart, [System.IO.SeekOrigin]::Begin) | Out-Null
+            
+            $buffer = New-Object byte[] 8192
+            $remaining = $contentLength
+            
+            while ($remaining -gt 0) {
+              $toRead = [Math]::Min($buffer.Length, $remaining)
+              $read = $fs.Read($buffer, 0, $toRead)
+              if ($read -eq 0) { break }
+              $res.OutputStream.Write($buffer, 0, $read)
+              $remaining -= $read
+            }
+          }
+          finally {
+            $fs.Close()
+            $res.OutputStream.Close()
+          }
+        } else {
+          # Normal Request (kein Range)
+          $res.StatusCode = 200
+          $res.ContentType = $ct
+          $res.ContentLength64 = $fileSize
+          $res.AddHeader("Accept-Ranges", "bytes")
+
+          $fs = [System.IO.File]::Open($full, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+          try {
+            $fs.CopyTo($res.OutputStream)
+          }
+          finally {
+            $fs.Close()
+            $res.OutputStream.Close()
+          }
         }
         continue
       }
@@ -527,6 +578,170 @@ try {
         }
         continue
       }
+
+      if ($path -eq "/videoconvert" -and $req.HttpMethod -eq "POST") {
+        $body = Read-RequestBody -Request $req
+        $form = Parse-FormUrlEncoded -Body $body
+        
+        $rel = $form["path"]
+        if ([string]::IsNullOrWhiteSpace($rel)) {
+          Send-ResponseText -Response $res -Text '{"error":"Missing path"}' -StatusCode 400 -ContentType "application/json"
+          continue
+        }
+        
+        try {
+          $videoFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $rel
+          
+          if (-not (Test-Path -LiteralPath $videoFull)) {
+            Send-ResponseText -Response $res -Text '{"error":"Video not found"}' -StatusCode 404 -ContentType "application/json"
+            continue
+          }
+          
+          # Prüfen ob Conversion nötig
+          $needsConv = Test-NeedsConversion -VideoPath $videoFull
+          $convertedPath = Get-ConvertedVideoPath -VideoPath $videoFull
+          
+          if (-not $needsConv) {
+            # Kein Conversion nötig - Original verwenden
+            $json = @{ 
+              status = "not_needed"
+              url = "/img?path=$(UrlEncode($rel))"
+            } | ConvertTo-Json -Compress
+            Send-ResponseText -Response $res -Text $json -ContentType "application/json"
+            continue
+          }
+          
+          # Prüfen ob bereits konvertiert
+          if (Test-Path -LiteralPath $convertedPath) {
+            # Bereits vorhanden
+            $relConverted = Get-RelativePathSafe -Base $RootFull -Full $convertedPath
+            $json = @{ 
+              status = "ready"
+              url = "/img?path=$(UrlEncode($relConverted))"
+            } | ConvertTo-Json -Compress
+            Send-ResponseText -Response $res -Text $json -ContentType "application/json"
+            continue
+          }
+          
+          # Conversion starten (im Hintergrund)
+          Write-Host "[CONVERT] Starte Conversion: $rel" -ForegroundColor Yellow
+          
+          # Sofort antworten
+          $json = @{ 
+            status = "converting"
+            message = "Video wird konvertiert..."
+          } | ConvertTo-Json -Compress
+          Send-ResponseText -Response $res -Text $json -ContentType "application/json"
+          
+          # Background-Conversion
+          $ps = [PowerShell]::Create()
+          $null = $ps.AddScript({
+            param($VideoPath, $OutputPath, $ProjectRoot)
+            
+            # Libs laden
+            . (Join-Path $ProjectRoot "Lib\Lib_VideoThumbs.ps1")
+            . (Join-Path $ProjectRoot "Lib\Lib_FileSystem.ps1")
+            
+            try {
+              Convert-VideoToH264 -VideoPath $VideoPath -OutputPath $OutputPath
+              Write-Host "[CONVERT] Fertig: $OutputPath" -ForegroundColor Green
+            } catch {
+              Write-Warning "[CONVERT] Fehler: $($_.Exception.Message)"
+            }
+          })
+          $null = $ps.AddParameter("VideoPath", $videoFull)
+          $null = $ps.AddParameter("OutputPath", $convertedPath)
+          $null = $ps.AddParameter("ProjectRoot", $ProjectRoot)
+          $null = $ps.BeginInvoke()
+          
+        } catch {
+          $json = @{ error = $_.Exception.Message } | ConvertTo-Json -Compress
+          Send-ResponseText -Response $res -Text $json -StatusCode 500 -ContentType "application/json"
+        }
+        continue
+      }
+
+      if ($path -eq "/videoconvert/status" -and $req.HttpMethod -eq "GET") {
+        $rel = UrlDecode($req.QueryString["path"])
+        
+        if ([string]::IsNullOrWhiteSpace($rel)) {
+          Send-ResponseText -Response $res -Text '{"error":"Missing path"}' -StatusCode 400 -ContentType "application/json"
+          continue
+        }
+        
+        try {
+          $videoFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $rel
+          $convertedPath = Get-ConvertedVideoPath -VideoPath $videoFull
+          
+          if (Test-Path -LiteralPath $convertedPath) {
+            $relConverted = Get-RelativePathSafe -Base $RootFull -Full $convertedPath
+            $json = @{ 
+              status = "ready"
+              url = "/img?path=$(UrlEncode($relConverted))"
+            } | ConvertTo-Json -Compress
+            Send-ResponseText -Response $res -Text $json -ContentType "application/json"
+          } else {
+            $json = @{ status = "converting" } | ConvertTo-Json -Compress
+            Send-ResponseText -Response $res -Text $json -ContentType "application/json"
+          }
+        } catch {
+          $json = @{ error = $_.Exception.Message } | ConvertTo-Json -Compress
+          Send-ResponseText -Response $res -Text $json -StatusCode 500 -ContentType "application/json"
+        }
+        continue
+      }
+
+if ($path -eq "/openvlc" -and $req.HttpMethod -eq "POST") {
+  $body = Read-RequestBody -Request $req
+  $form = Parse-FormUrlEncoded -Body $body
+  
+  $rel = $form["path"]
+  if ([string]::IsNullOrWhiteSpace($rel)) {
+    Send-ResponseText -Response $res -Text '{"error":"Missing path"}' -StatusCode 400 -ContentType "application/json"
+    continue
+  }
+  
+  try {
+    $videoFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $rel
+    
+    if (-not (Test-Path -LiteralPath $videoFull)) {
+      Send-ResponseText -Response $res -Text '{"error":"Video not found"}' -StatusCode 404 -ContentType "application/json"
+      continue
+    }
+    
+    # VLC finden
+    $vlcPaths = @(
+      "C:\Program Files\VideoLAN\VLC\vlc.exe",
+      "C:\Program Files (x86)\VideoLAN\VLC\vlc.exe",
+      "${env:ProgramFiles}\VideoLAN\VLC\vlc.exe",
+      "${env:ProgramFiles(x86)}\VideoLAN\VLC\vlc.exe"
+    )
+    
+    $vlcExe = $null
+    foreach ($p in $vlcPaths) {
+      if (Test-Path -LiteralPath $p) {
+        $vlcExe = $p
+        break
+      }
+    }
+    
+    if (-not $vlcExe) {
+      # Fallback: Standard-Player
+      Start-Process -FilePath $videoFull
+    } else {
+      # VLC starten
+      Start-Process -FilePath $vlcExe -ArgumentList "`"$videoFull`""
+    }
+    
+    $json = @{ success = $true } | ConvertTo-Json -Compress
+    Send-ResponseText -Response $res -Text $json -ContentType "application/json"
+    
+  } catch {
+    $json = @{ error = $_.Exception.Message } | ConvertTo-Json -Compress
+    Send-ResponseText -Response $res -Text $json -StatusCode 500 -ContentType "application/json"
+  }
+  continue
+}
 
       if ($path -eq "/move" -and $req.HttpMethod -eq "POST") {
         $body = Read-RequestBody -Request $req

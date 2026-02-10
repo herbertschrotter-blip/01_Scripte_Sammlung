@@ -307,19 +307,21 @@ function Get-PhotoGalleryHTML {
     max-width:96vw;
     max-height:96vh;
   }
+
   #viewerImg{
-    max-width:96vw;
-    max-height:96vh;
-    border-radius:var(--radius);
-    display:block;
-    cursor:pointer;
-  }
-  #viewerVideo{
-    max-width:96vw;
-    max-height:96vh;
-    border-radius:var(--radius);
-    display:none;
-  }
+  max-width:98vw;
+  max-height:98vh;
+  border-radius:var(--radius);
+  display:block;
+  cursor:pointer;
+}
+#viewerVideo{
+  max-width:98vw;
+  max-height:98vh;
+  border-radius:var(--radius);
+  display:none;
+}
+
   #viewerX{
     position:absolute;
     top:-10px;
@@ -378,6 +380,22 @@ function Get-PhotoGalleryHTML {
     transition:background var(--transition);
   }
   #viewerOpen:hover{background:rgba(255,255,255,.25);}
+
+  #viewerVLC{
+  display:inline-block;
+  margin-left:10px;
+  padding:10px 20px;
+  border-radius:var(--radius-sm);
+  background:rgba(255,255,255,.15);
+  color:#fff;
+  border:none;
+  font-weight:600;
+  font-size:14px;
+  backdrop-filter:blur(4px);
+  cursor:pointer;
+  transition:background var(--transition);
+}
+#viewerVLC:hover{background:rgba(255,255,255,.25);}
 
   /* --- Thumb size button group --- */
   .sizeGroup{
@@ -503,8 +521,12 @@ function Get-PhotoGalleryHTML {
       <button id="viewerX" type="button" onclick="closeViewer()">X</button>
       <img id="viewerImg" src="" title="Links klicken = zurück | Rechts klicken = vorwärts" />
       <video id="viewerVideo" controls></video>
-      <div id="viewerBar"><a id="viewerOpen" href="" target="_blank" rel="noopener">In neuem Tab öffnen</a></div>
-    </div>
+<div id="viewerBar">
+  <a id="viewerOpen" href="" target="_blank" rel="noopener">In neuem Tab öffnen</a>
+  <button id="viewerVLC" type="button" onclick="openWithVLC()" style="display:none;">📂 Mit VLC öffnen</button>
+</div>   
+      </div>
+    
   </div>
 
   <div id="loadOverlay">
@@ -665,16 +687,18 @@ function openViewerWith(folderKey, urls, types, idx){
   const viewerImg = document.getElementById("viewerImg");
   const viewerVideo = document.getElementById("viewerVideo");
   const a = document.getElementById("viewerOpen");
+  const vlcBtn = document.getElementById("viewerVLC");  // ← NEU
 
   if (currentType === 'video') {
-    // Video anzeigen
+    // Video anzeigen - mit Lazy Conversion Check
     viewerImg.style.display = 'none';
     viewerVideo.style.display = 'block';
-    viewerVideo.src = getOriginalMediaSrc(src);
-    viewerVideo.load();
-    viewerVideo.play().catch(() => {});
-    a.href = getOriginalMediaSrc(src);
-  } else {
+    
+    // Conversion-Check starten
+    const videoRel = urlToRel(getOriginalMediaSrc(src));
+    checkAndConvertVideo(videoRel, viewerVideo, a);
+    vlcBtn.style.display = 'inline-block';  // ← NEU: VLC-Button zeigen
+  } else {   
     // Bild anzeigen
     viewerVideo.style.display = 'none';
     viewerVideo.pause();
@@ -682,12 +706,13 @@ function openViewerWith(folderKey, urls, types, idx){
     viewerImg.style.display = 'block';
     viewerImg.src = src;
     a.href = src;
+    vlcBtn.style.display = 'none';  // ← NEU: VLC-Button verstecken
   }
 
   v.style.display = "flex";
   preloadAround(urls, types, window.viewerState.idx, 5);
 }
-
+  
 window._preloaded = window._preloaded || new Set();
 
 function preloadAround(urls, types, center, range){
@@ -716,14 +741,14 @@ function viewerPrev(){
   const a = document.getElementById("viewerOpen");
   const currentType = st.types[st.idx];
 
-  if (currentType === 'video') {
+if (currentType === 'video') {
     viewerImg.style.display = 'none';
     viewerVideo.style.display = 'block';
-    viewerVideo.src = getOriginalMediaSrc(st.urls[st.idx]);
-    viewerVideo.load();
-    viewerVideo.play().catch(() => {});
-    a.href = getOriginalMediaSrc(st.urls[st.idx]);
+    
+    const videoRel = urlToRel(getOriginalMediaSrc(st.urls[st.idx]));
+    checkAndConvertVideo(videoRel, viewerVideo, a);
   } else {
+
     viewerVideo.style.display = 'none';
     viewerVideo.pause();
     viewerVideo.src = '';
@@ -745,14 +770,14 @@ function viewerNext(){
   const a = document.getElementById("viewerOpen");
   const currentType = st.types[st.idx];
 
-  if (currentType === 'video') {
+if (currentType === 'video') {
     viewerImg.style.display = 'none';
     viewerVideo.style.display = 'block';
-    viewerVideo.src = getOriginalMediaSrc(st.urls[st.idx]);
-    viewerVideo.load();
-    viewerVideo.play().catch(() => {});
-    a.href = getOriginalMediaSrc(st.urls[st.idx]);
+    
+    const videoRel = urlToRel(getOriginalMediaSrc(st.urls[st.idx]));
+    checkAndConvertVideo(videoRel, viewerVideo, a);
   } else {
+
     viewerVideo.style.display = 'none';
     viewerVideo.pause();
     viewerVideo.src = '';
@@ -1230,6 +1255,111 @@ function submitMove(){
     alert("Fehler: " + err);
   });
 }
+// --- Lazy Video Conversion ---
+function checkAndConvertVideo(videoRel, videoElement, linkElement) {
+  // Loading-Overlay erstellen
+  const overlay = document.getElementById("loadOverlay");
+  const loadMsg = document.getElementById("loadMsg");
+  
+  overlay.classList.add("active");
+  loadMsg.textContent = "Video wird geladen...";
+  
+  // Conversion-Check
+  fetch("/videoconvert", {
+    method: "POST",
+    headers: {"Content-Type": "application/x-www-form-urlencoded"},
+    body: "path=" + encodeURIComponent(videoRel)
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.status === "ready" || data.status === "not_needed") {
+      // Video ist bereit
+      overlay.classList.remove("active");
+      videoElement.src = data.url;
+      linkElement.href = data.url;
+      videoElement.load();
+      videoElement.play().catch(() => {});
+    } else if (data.status === "converting") {
+      // Conversion läuft - Status pollen
+      loadMsg.textContent = "Video wird konvertiert (DivX → H.264)...";
+      pollConversionStatus(videoRel, videoElement, linkElement);
+    } else {
+      overlay.classList.remove("active");
+      alert("Fehler: " + (data.error || "Unbekannter Fehler"));
+    }
+  })
+  .catch(err => {
+    overlay.classList.remove("active");
+    alert("Fehler beim Laden: " + err);
+  });
+}
+
+function pollConversionStatus(videoRel, videoElement, linkElement) {
+  const overlay = document.getElementById("loadOverlay");
+  const loadMsg = document.getElementById("loadMsg");
+  
+  let pollCount = 0;
+  const maxPolls = 120; // 2 Minuten (120 * 1 Sekunde)
+  
+  const interval = setInterval(() => {
+    pollCount++;
+    
+    if (pollCount > maxPolls) {
+      clearInterval(interval);
+      overlay.classList.remove("active");
+      alert("Timeout: Conversion dauert zu lange. Bitte versuche es später nochmal.");
+      return;
+    }
+    
+    fetch("/videoconvert/status?path=" + encodeURIComponent(videoRel))
+      .then(r => r.json())
+      .then(data => {
+        if (data.status === "ready") {
+          clearInterval(interval);
+          overlay.classList.remove("active");
+          
+          // Video laden
+          videoElement.src = data.url;
+          linkElement.href = data.url;
+          videoElement.load();
+          videoElement.play().catch(() => {});
+        } else {
+          // Noch am konvertieren - Countdown anzeigen
+          const remaining = Math.ceil((maxPolls - pollCount) / 2);
+          loadMsg.textContent = "Video wird konvertiert... (" + remaining + "s)";
+        }
+      })
+      .catch(() => {
+        // Fehler beim Polling - weitermachen
+      });
+  }, 1000); // Alle 1 Sekunde prüfen
+}
+
+function openWithVLC() {
+  const st = window.viewerState;
+  if (!st.urls.length) return;
+  
+  const src = st.urls[st.idx];
+  const rel = urlToRel(isVideo(src) ? getOriginalMediaSrc(src) : src);
+  if (!rel) return;
+  
+  fetch("/openvlc", {
+    method: "POST",
+    headers: {"Content-Type": "application/x-www-form-urlencoded"},
+    body: "path=" + encodeURIComponent(rel)
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) {
+      alert("Fehler: " + data.error);
+    }
+  })
+  .catch(err => {
+    alert("Fehler: " + err);
+  });
+}
+
+
 </script>
 </body>
 </html>

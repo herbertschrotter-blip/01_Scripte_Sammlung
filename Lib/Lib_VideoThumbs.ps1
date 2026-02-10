@@ -583,3 +583,111 @@ function New-VideoThumbnailsBulk {
     Total = $videos.Count
   }
 }
+
+# Am Ende der Datei hinzufügen:
+
+# ------------------------------------------------------------
+# Get H.264 Converted Video Path
+# ------------------------------------------------------------
+function Get-ConvertedVideoPath {
+  param([Parameter(Mandatory)][string]$VideoPath)
+  
+  $dir = Split-Path -Parent $VideoPath
+  $thumbsDir = Join-Path $dir ".thumbs"
+  
+  if (-not (Test-Path -LiteralPath $thumbsDir)) {
+    New-Item -Path $thumbsDir -ItemType Directory -Force | Out-Null
+    try {
+      (Get-Item -LiteralPath $thumbsDir -Force).Attributes = "Hidden"
+    } catch { }
+  }
+  
+  $fileName = [System.IO.Path]::GetFileName($VideoPath)
+  $convertedName = [System.IO.Path]::GetFileNameWithoutExtension($fileName) + "_h264.mp4"
+  
+  return Join-Path $thumbsDir $convertedName
+}
+
+# ------------------------------------------------------------
+# Convert Video to H.264 (Lazy Conversion)
+# ------------------------------------------------------------
+function Convert-VideoToH264 {
+  param(
+    [Parameter(Mandatory)][string]$VideoPath,
+    [string]$OutputPath
+  )
+  
+  if (-not (Test-Path -LiteralPath $VideoPath)) {
+    throw "Video nicht gefunden: $VideoPath"
+  }
+  
+  $ffmpeg = Find-FFmpegPath
+  if (-not $ffmpeg) {
+    throw "FFmpeg nicht gefunden"
+  }
+  
+  # Output-Verzeichnis erstellen
+  $outDir = Split-Path -Parent $OutputPath
+  if (-not (Test-Path -LiteralPath $outDir)) {
+    New-Item -Path $outDir -ItemType Directory -Force | Out-Null
+  }
+  
+  # Temporäre Datei für Conversion
+  $tempOut = $OutputPath + ".tmp.mp4"
+  
+  # FFmpeg-Befehl: DivX/XviD -> H.264
+  $args = @(
+    "-i", "`"$VideoPath`""
+    "-c:v", "libx264"           # H.264 Video Codec
+    "-preset", "medium"         # Encoding-Speed (fast/medium/slow)
+    "-crf", "23"                # Qualität (18-28, niedriger = besser)
+    "-c:a", "aac"               # AAC Audio Codec
+    "-b:a", "128k"              # Audio-Bitrate
+    "-movflags", "+faststart"   # Web-Optimierung (Metadaten vorne)
+    "-y"                        # Überschreiben ohne Nachfrage
+    "`"$tempOut`""
+  )
+  
+  $cmd = "& `"$ffmpeg`" " + ($args -join " ") + " 2>&1"
+  
+  try {
+    $output = Invoke-Expression $cmd
+    
+    # Prüfen ob erfolgreich
+    if (Test-Path -LiteralPath $tempOut) {
+      # Umbenennen zu finaler Datei
+      Move-Item -LiteralPath $tempOut -Destination $OutputPath -Force
+      return $OutputPath
+    } else {
+      throw "Conversion fehlgeschlagen: Output-Datei nicht erstellt"
+    }
+  } catch {
+    # Temp-Datei aufräumen
+    if (Test-Path -LiteralPath $tempOut) {
+      Remove-Item -LiteralPath $tempOut -Force -ErrorAction SilentlyContinue
+    }
+    throw "FFmpeg-Fehler: $($_.Exception.Message)"
+  }
+}
+
+# ------------------------------------------------------------
+# Check if Video needs H.264 Conversion
+# ------------------------------------------------------------
+function Test-NeedsConversion {
+  param([Parameter(Mandatory)][string]$VideoPath)
+  
+  $metadata = Get-VideoMetadata -VideoPath $VideoPath
+  
+  # Codecs die konvertiert werden müssen
+  $needsConversion = @(
+    "divx", "dx50", "xvid", "div3", "mp4v",  # DivX/XviD
+    "msmpeg4", "msmpeg4v2", "msmpeg4v3",      # Microsoft MPEG-4
+    "flv1", "vp6", "vp6f",                    # Flash Video
+    "rv10", "rv20", "rv30", "rv40",           # RealVideo
+    "wmv1", "wmv2", "wmv3", "vc1"             # Windows Media
+  )
+  
+  $codec = ($metadata.VideoCodec -replace '[^a-z0-9]', '').ToLower()
+  
+  return $needsConversion -contains $codec
+}
