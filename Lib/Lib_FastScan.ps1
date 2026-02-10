@@ -12,6 +12,7 @@ Zweck:
   - Incremental Updates (nur geänderte Ordner)
   - Optional: Parallel-Scan (PowerShell 7+)
   - Kompatibel mit alter Scan-ImageFolders Signatur
+  - Ignoriert .thumbs Ordner (Video-Thumbnails)
 #>
 
 Set-StrictMode -Version Latest
@@ -105,6 +106,11 @@ function Scan-SingleFolder {
     [string[]]$ImageExtensions
   )
   
+  # Skip .thumbs Ordner komplett
+  if ((Split-Path -Leaf $FolderPath) -eq '.thumbs') {
+    return $null
+  }
+  
   $rel = Get-RelativePathSafe -Base $RootPath -Full $FolderPath
   
   try {
@@ -119,11 +125,16 @@ function Scan-SingleFolder {
     return $null
   }
   
-  $imgsRel = $imgs | ForEach-Object { 
+  $imgsRel = @($imgs | ForEach-Object { 
     Get-RelativePathSafe -Base $RootPath -Full $_.FullName 
-  }
+  })
   
-  $dir = Get-Item -LiteralPath $FolderPath
+  try {
+    $dir = Get-Item -LiteralPath $FolderPath -Force -ErrorAction Stop
+  } catch {
+    Write-Warning "Fehler beim Zugriff auf Ordner $FolderPath : $($_.Exception.Message)"
+    return $null
+  }
   
   return [PSCustomObject]@{
     RelPath        = $rel
@@ -211,10 +222,11 @@ function Scan-ImageFolders {
     }
   }
 
-  # Alle Ordner finden
+  # Alle Ordner finden (außer .thumbs)
   Write-Verbose "Scanne Ordnerstruktur..."
   try {
-    $allDirs = @(Get-ChildItem -LiteralPath $rootFull -Directory -Recurse -Force -ErrorAction SilentlyContinue)
+    $allDirs = @(Get-ChildItem -LiteralPath $rootFull -Directory -Recurse -Force -ErrorAction SilentlyContinue | 
+                 Where-Object { $_.Name -ne '.thumbs' })
   } catch {
     Write-Warning "Fehler beim Scannen der Ordnerstruktur: $($_.Exception.Message)"
     $allDirs = @()
@@ -238,7 +250,7 @@ function Scan-ImageFolders {
         $result += [PSCustomObject]@{
           RelPath   = $cachedFolder.RelPath
           ImgCount  = $cachedFolder.ImgCount
-          ImagesRel = $cachedFolder.ImagesRel
+          ImagesRel = @($cachedFolder.ImagesRel)
         }
         $cachedCount++
         $useCache = $true
@@ -252,7 +264,7 @@ function Scan-ImageFolders {
         $result += [PSCustomObject]@{
           RelPath   = $folderData.RelPath
           ImgCount  = $folderData.ImgCount
-          ImagesRel = $folderData.ImagesRel
+          ImagesRel = @($folderData.ImagesRel)
         }
         # Für Cache speichern (mit LastWriteUtc)
         $cacheData[$relPath] = $folderData
