@@ -1,15 +1,16 @@
 <#
 ManifestHint:
   ExportFunctions = @()
-  Description     = "Lokale HTML-Übersicht für Bild- und Video-Ordner (rekursiv), Ordner auswählen + löschen (Papierkorb), Video-Thumbnails mit FFmpeg, Ordner zuklappbar (ganze Zeile klickbar), im zugeklappten Zustand 10 zufällige Preview-Thumbs pro Ordner, beim Aufklappen werden alle Medien geladen. Viewer mit Navigation (Pfeiltasten + Klick links/rechts) für Bilder und Videos. Beenden per X. /img und /videothumb liefern per Streaming."
+  Description     = "Lokale HTML-Übersicht für Bild- und Video-Ordner (rekursiv), Ordner auswählen + löschen (Papierkorb), Video-Thumbnails mit FFmpeg, Video-Metadaten-Anzeige, Ordner zuklappbar (ganze Zeile klickbar), im zugeklappten Zustand 10 zufällige Preview-Thumbs pro Ordner, beim Aufklappen werden alle Medien geladen. Viewer mit Navigation (Pfeiltasten + Klick links/rechts) für Bilder und Videos. Beenden per X. /img und /videothumb liefern per Streaming."
   Category        = "Media"
-  Tags            = @("Photos","Videos","HTML","Gallery","Recursive","DeleteFolders","RecycleBin","HttpListener","Lightbox","Collapse","Shutdown","OnDemand","Preview10Random","ArrowKeys","NextPrev","Streaming","FFmpeg","VideoThumbnails")
+  Tags            = @("Photos","Videos","HTML","Gallery","Recursive","DeleteFolders","RecycleBin","HttpListener","Lightbox","Collapse","Shutdown","OnDemand","Preview10Random","ArrowKeys","NextPrev","Streaming","FFmpeg","VideoThumbnails","VideoMetadata","BrowserCompatibility")
   Dependencies    = @("System.Net.HttpListener","System.Windows.Forms","Microsoft.VisualBasic","FFmpeg")
 
 Zweck:
   - Root wählen (Dialog, wenn -RootPath nicht gesetzt).
   - Alle Unterordner scannen und Ordner listen, die Bild- oder Videodateien enthalten.
-  - Video-Thumbnails automatisch mit FFmpeg generieren (in .thumbs Ordner) BEIM START.
+  - Video-Thumbnails automatisch mit FFmpeg generieren (in .thumbs Ordner) BEIM START mit Parallel-Processing.
+  - Video-Metadaten auslesen (Codec, Format, Auflösung, Dauer, Browser-Kompatibilität).
   - Zugeklappt: pro Ordner 10 zufällige Preview-Thumbs immer sichtbar.
   - Aufklappen: Preview ausblenden, alle Medien on-demand laden.
   - Thumbnail klick -> großer Viewer im Browser (Overlay/Lightbox) + Navigation:
@@ -93,106 +94,118 @@ if (-not (Test-Path -LiteralPath $RootPath -PathType Container)) {
 
 $RootFull = [System.IO.Path]::GetFullPath($RootPath)
 
+# Video-Metadata Cache initialisieren
+$script:VideoMetadataCache = @{}
+
 try {
   Write-Host "Scanne Bild- und Video-Ordner..."
   $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache
   Write-Host "Fertig: $($Folders.Count) Ordner mit Medien gefunden"
   
-# NEU: Video-Thumbnails pre-generieren
-Write-Host "Generiere Video-Thumbnails (falls noch nicht vorhanden)..."
-
-# Alle Videos sammeln
-$allVideos = @()
-foreach ($folder in $Folders) {
-  foreach ($mediaRel in $folder.ImagesRel) {
-    if (Test-IsVideoFile -Path $mediaRel) {
-      try {
-        $videoFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $mediaRel
-        $allVideos += [PSCustomObject]@{
-          RelPath = $mediaRel
-          FullPath = $videoFull
-        }
-      } catch {
-        Write-Warning "Fehler beim Auflösen von $mediaRel : $($_.Exception.Message)"
-      }
-    }
-  }
-}
-
-$videoTotal = $allVideos.Count
-
-if ($videoTotal -gt 0) {
-  Write-Host "Gefunden: $videoTotal Videos"
+  # NEU: Video-Thumbnails pre-generieren
+  Write-Host "Generiere Video-Thumbnails (falls noch nicht vorhanden)..."
   
-  # PowerShell 7+ mit Parallel-Verarbeitung
-  if ($PSVersionTable.PSVersion.Major -ge 7) {
-    Write-Host "Verwende parallele Verarbeitung (bis zu 8 Videos gleichzeitig)..." -ForegroundColor Cyan
-    
-    $results = $allVideos | ForEach-Object -ThrottleLimit 8 -Parallel {
-      $video = $_
-      $ProjectRoot = $using:ProjectRoot
-      
-      # Libs in Parallel-Context laden
-      . (Join-Path $ProjectRoot "Lib\Lib_FileSystem.ps1")
-      . (Join-Path $ProjectRoot "Lib\Lib_VideoThumbs.ps1")
-      
-      $thumbPath = Get-VideoThumbnailPath -VideoPath $video.FullPath
-      
-      if (Test-Path -LiteralPath $thumbPath) {
-        return [PSCustomObject]@{ Status = "Skipped"; Path = $video.RelPath }
-      } else {
+  # Alle Videos sammeln MIT METADATEN
+  $allVideos = @()
+  foreach ($folder in $Folders) {
+    foreach ($mediaRel in $folder.ImagesRel) {
+      if (Test-IsVideoFile -Path $mediaRel) {
         try {
-          $thumb = New-VideoThumbnail -VideoPath $video.FullPath -Verbose:$false
-          if ($thumb) {
-            return [PSCustomObject]@{ Status = "Created"; Path = $video.RelPath }
-          } else {
-            return [PSCustomObject]@{ Status = "Failed"; Path = $video.RelPath }
+          $videoFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $mediaRel
+          
+          # Metadaten auslesen
+          Write-Host "  Analysiere: $mediaRel" -ForegroundColor DarkGray
+          $metadata = Get-VideoMetadata -VideoPath $videoFull
+          
+          # IN CACHE SPEICHERN
+          $script:VideoMetadataCache[$mediaRel] = $metadata
+          
+          $allVideos += [PSCustomObject]@{
+            RelPath = $mediaRel
+            FullPath = $videoFull
+            Metadata = $metadata
           }
         } catch {
-          return [PSCustomObject]@{ Status = "Error"; Path = $video.RelPath; Error = $_.Exception.Message }
-        }
-      }
-    }
-    
-$videoCount = @($results | Where-Object { $_.Status -eq "Created" }).Count
-$videoSkipped = @($results | Where-Object { $_.Status -eq "Skipped" }).Count
-$videoFailed = @($results | Where-Object { $_.Status -in @("Failed","Error") }).Count
-    
-    if ($videoFailed -gt 0) {
-      Write-Warning "$videoFailed Videos konnten nicht verarbeitet werden"
-    }
-    
-  } else {
-    # PowerShell 5.1 - Sequenziell (wie vorher)
-    Write-Host "Verwende sequenzielle Verarbeitung (PowerShell 5.1)..." -ForegroundColor Yellow
-    Write-Host "TIPP: Für 4-8x schnellere Verarbeitung PowerShell 7+ installieren!" -ForegroundColor Yellow
-    Write-Host "      Download: https://aka.ms/powershell" -ForegroundColor Yellow
-    
-    $videoCount = 0
-    $videoSkipped = 0
-    
-    $progressCount = 0
-    foreach ($video in $allVideos) {
-      $progressCount++
-      
-      $thumbPath = Get-VideoThumbnailPath -VideoPath $video.FullPath
-      if (Test-Path -LiteralPath $thumbPath) {
-        $videoSkipped++
-      } else {
-        Write-Host "  [$progressCount/$videoTotal] Erstelle: $($video.RelPath)" -ForegroundColor Cyan
-        try {
-          $thumb = New-VideoThumbnail -VideoPath $video.FullPath -Verbose:$false
-          if ($thumb) { $videoCount++ }
-        } catch {
-          Write-Warning "Fehler bei $($video.RelPath): $($_.Exception.Message)"
+          Write-Warning "Fehler beim Auflösen von $mediaRel : $($_.Exception.Message)"
         }
       }
     }
   }
   
-  Write-Host "Video-Thumbnails: $videoCount neu erstellt, $videoSkipped bereits vorhanden (von $videoTotal Videos gesamt)" -ForegroundColor Green
-}
-
+  $videoTotal = $allVideos.Count
+  
+  if ($videoTotal -gt 0) {
+    Write-Host "Gefunden: $videoTotal Videos"
+    
+    # PowerShell 7+ mit Parallel-Verarbeitung
+    if ($PSVersionTable.PSVersion.Major -ge 7) {
+      Write-Host "Verwende parallele Verarbeitung (bis zu 8 Videos gleichzeitig)..." -ForegroundColor Cyan
+      
+      $results = @($allVideos | ForEach-Object -ThrottleLimit 8 -Parallel {
+        $video = $_
+        $ProjectRoot = $using:ProjectRoot
+        
+        # Libs in Parallel-Context laden
+        . (Join-Path $ProjectRoot "Lib\Lib_FileSystem.ps1")
+        . (Join-Path $ProjectRoot "Lib\Lib_VideoThumbs.ps1")
+        
+        $thumbPath = Get-VideoThumbnailPath -VideoPath $video.FullPath
+        
+        if (Test-Path -LiteralPath $thumbPath) {
+          return [PSCustomObject]@{ Status = "Skipped"; Path = $video.RelPath }
+        } else {
+          try {
+            $thumb = New-VideoThumbnail -VideoPath $video.FullPath -Verbose:$false
+            if ($thumb) {
+              return [PSCustomObject]@{ Status = "Created"; Path = $video.RelPath }
+            } else {
+              return [PSCustomObject]@{ Status = "Failed"; Path = $video.RelPath }
+            }
+          } catch {
+            return [PSCustomObject]@{ Status = "Error"; Path = $video.RelPath; Error = $_.Exception.Message }
+          }
+        }
+      })
+      
+      $videoCount = @($results | Where-Object { $_.Status -eq "Created" }).Count
+      $videoSkipped = @($results | Where-Object { $_.Status -eq "Skipped" }).Count
+      $videoFailed = @($results | Where-Object { $_.Status -in @("Failed","Error") }).Count
+      
+      if ($videoFailed -gt 0) {
+        Write-Warning "$videoFailed Videos konnten nicht verarbeitet werden"
+      }
+      
+    } else {
+      # PowerShell 5.1 - Sequenziell (wie vorher)
+      Write-Host "Verwende sequenzielle Verarbeitung (PowerShell 5.1)..." -ForegroundColor Yellow
+      Write-Host "TIPP: Für 4-8x schnellere Verarbeitung PowerShell 7+ installieren!" -ForegroundColor Yellow
+      Write-Host "      Download: https://aka.ms/powershell" -ForegroundColor Yellow
+      
+      $videoCount = 0
+      $videoSkipped = 0
+      
+      $progressCount = 0
+      foreach ($video in $allVideos) {
+        $progressCount++
+        
+        $thumbPath = Get-VideoThumbnailPath -VideoPath $video.FullPath
+        if (Test-Path -LiteralPath $thumbPath) {
+          $videoSkipped++
+        } else {
+          Write-Host "  [$progressCount/$videoTotal] Erstelle: $($video.RelPath)" -ForegroundColor Cyan
+          try {
+            $thumb = New-VideoThumbnail -VideoPath $video.FullPath -Verbose:$false
+            if ($thumb) { $videoCount++ }
+          } catch {
+            Write-Warning "Fehler bei $($video.RelPath): $($_.Exception.Message)"
+          }
+        }
+      }
+    }
+    
+    Write-Host "Video-Thumbnails: $videoCount neu erstellt, $videoSkipped bereits vorhanden (von $videoTotal Videos gesamt)" -ForegroundColor Green
+  }
+  
 } catch {
   Write-Err "E030" "Scan fehlgeschlagen: $($_.Exception.Message)"
   return
@@ -214,6 +227,7 @@ function Build-CardRows {
     $imgList = @()
     $imgRelList = @()
     $mediaTypes = @()
+    $mediaMetadata = @()
     
     foreach ($mediaRel in $f.ImagesRel) {
       $imgRelList += $mediaRel
@@ -225,16 +239,38 @@ function Build-CardRows {
         # Video-Thumbnail URL
         $imgList += "/videothumb?path=$(UrlEncode($mediaRel))"
         $mediaTypes += "video"
+        
+        # Metadaten hinzufügen (aus Cache)
+        $videoMeta = $script:VideoMetadataCache[$mediaRel]
+        if ($videoMeta) {
+          $metaJson = @{
+            codec = $videoMeta.VideoCodec
+            format = $videoMeta.Format
+            resolution = $videoMeta.Resolution
+            duration = $videoMeta.DurationFormatted
+            size = $videoMeta.FileSizeFormatted
+            bitrate = $videoMeta.BitrateFormatted
+            compat = $videoMeta.BrowserCompatibility
+            compatIcon = $videoMeta.CompatibilityIcon
+            compatText = $videoMeta.CompatibilityText
+            filename = $videoMeta.FileName
+          } | ConvertTo-Json -Compress
+          $mediaMetadata += $metaJson
+        } else {
+          $mediaMetadata += "{}"
+        }
       } else {
         # Normales Bild URL
         $imgList += "/img?path=$(UrlEncode($mediaRel))"
         $mediaTypes += "image"
+        $mediaMetadata += "{}"
       }
     }
     
     $imgListStr = ($imgList) -join "|"
     $imgRelListStr = ($imgRelList) -join "|"
     $mediaTypesStr = ($mediaTypes) -join "|"
+    $mediaMetadataStr = ($mediaMetadata) -join "|"
 
     [void]$rows.AppendLine(@"
 <div class="card" data-path="$(HtmlEncode($rel))">
@@ -246,10 +282,10 @@ function Build-CardRows {
   </div>
 
   <!-- Zugeklappt: 10 zufällige Preview-Thumbs -->
-  <div class="previewRow" data-preview-loaded="0" data-images="$(HtmlEncode($imgListStr))" data-images-rel="$(HtmlEncode($imgRelListStr))" data-media-types="$(HtmlEncode($mediaTypesStr))"></div>
+  <div class="previewRow" data-preview-loaded="0" data-images="$(HtmlEncode($imgListStr))" data-images-rel="$(HtmlEncode($imgRelListStr))" data-media-types="$(HtmlEncode($mediaTypesStr))" data-media-metadata="$(HtmlEncode($mediaMetadataStr))"></div>
 
   <!-- Aufgeklappt: alle Medien (on-demand) -->
-  <div class="thumbs isCollapsed" data-loaded="0" data-images="$(HtmlEncode($imgListStr))" data-images-rel="$(HtmlEncode($imgRelListStr))" data-media-types="$(HtmlEncode($mediaTypesStr))"></div>
+  <div class="thumbs isCollapsed" data-loaded="0" data-images="$(HtmlEncode($imgListStr))" data-images-rel="$(HtmlEncode($imgRelListStr))" data-media-types="$(HtmlEncode($mediaTypesStr))" data-media-metadata="$(HtmlEncode($mediaMetadataStr))"></div>
 </div>
 "@)
   }
@@ -306,83 +342,96 @@ try {
         break
       }
 
+      # Favicon ignorieren (verhindert doppelte Response)
+      if ($path -eq "/favicon.ico") {
+        $res.StatusCode = 404
+        $res.OutputStream.Close()
+        continue
+      }
+      
       if ($path -eq "/openrecyclebin" -and $req.HttpMethod -eq "POST") {
         Start-Process "explorer.exe" -ArgumentList "shell:RecycleBinFolder"
         Send-ResponseText -Response $res -Text "OK" -StatusCode 200
         continue
       }
 
-if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
-  $newRoot = Show-FolderDialog -Description "Neuen Root-Ordner auswählen" -ShowNewFolderButton $false -TopMost $true
-  
-  if ($newRoot -and (Test-Path -LiteralPath $newRoot -PathType Container)) {
-    $RootFull = [System.IO.Path]::GetFullPath($newRoot)
-    
-    # Scan
-    Write-Host ("[INFO] Root gewechselt: {0}" -f $RootFull)
-    $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache
-    
-    # Video-Thumbnails pre-generieren (parallel wie beim Start)
-    Write-Host "Generiere Video-Thumbnails..."
-    
-    # Alle Videos sammeln
-    $allVideos = @()
-    foreach ($folder in $Folders) {
-      foreach ($mediaRel in $folder.ImagesRel) {
-        if (Test-IsVideoFile -Path $mediaRel) {
-          try {
-            $videoFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $mediaRel
-            $allVideos += [PSCustomObject]@{ RelPath = $mediaRel; FullPath = $videoFull }
-          } catch { }
-        }
-      }
-    }
-    
-    $videoTotal = $allVideos.Count
-    
-    if ($videoTotal -gt 0) {
-      if ($PSVersionTable.PSVersion.Major -ge 7) {
-        # PowerShell 7: Parallel
-        $results = $allVideos | ForEach-Object -ThrottleLimit 8 -Parallel {
-          $video = $_
-          $ProjectRoot = $using:ProjectRoot
-          
-          . (Join-Path $ProjectRoot "Lib\Lib_FileSystem.ps1")
-          . (Join-Path $ProjectRoot "Lib\Lib_VideoThumbs.ps1")
-          
-          $thumbPath = Get-VideoThumbnailPath -VideoPath $video.FullPath
-          if (-not (Test-Path -LiteralPath $thumbPath)) {
-            try {
-              $thumb = New-VideoThumbnail -VideoPath $video.FullPath -Verbose:$false
-              if ($thumb) { return "Created" } else { return "Failed" }
-            } catch { return "Error" }
-          } else { return "Skipped" }
-        }
+      if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
+        $newRoot = Show-FolderDialog -Description "Neuen Root-Ordner auswählen" -ShowNewFolderButton $false -TopMost $true
         
-        $videoCount = ($results | Where-Object { $_ -eq "Created" }).Count
-      } else {
-        # PowerShell 5.1: Sequenziell
-        $videoCount = 0
-        foreach ($video in $allVideos) {
-          $thumbPath = Get-VideoThumbnailPath -VideoPath $video.FullPath
-          if (-not (Test-Path -LiteralPath $thumbPath)) {
-            try {
-              $thumb = New-VideoThumbnail -VideoPath $video.FullPath -Verbose:$false
-              if ($thumb) { $videoCount++ }
-            } catch { }
+        if ($newRoot -and (Test-Path -LiteralPath $newRoot -PathType Container)) {
+          $RootFull = [System.IO.Path]::GetFullPath($newRoot)
+          
+          # Scan
+          Write-Host ("[INFO] Root gewechselt: {0}" -f $RootFull)
+          $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache
+          
+          # Video-Thumbnails pre-generieren (parallel wie beim Start)
+          Write-Host "Generiere Video-Thumbnails..."
+          
+          # Alle Videos sammeln
+          $allVideos = @()
+          foreach ($folder in $Folders) {
+            foreach ($mediaRel in $folder.ImagesRel) {
+              if (Test-IsVideoFile -Path $mediaRel) {
+                try {
+                  $videoFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $mediaRel
+                  
+                  # Metadaten auslesen und in Cache speichern
+                  $metadata = Get-VideoMetadata -VideoPath $videoFull
+                  $script:VideoMetadataCache[$mediaRel] = $metadata
+                  
+                  $allVideos += [PSCustomObject]@{ RelPath = $mediaRel; FullPath = $videoFull }
+                } catch { }
+              }
+            }
+          }
+          
+          $videoTotal = $allVideos.Count
+          
+          if ($videoTotal -gt 0) {
+            if ($PSVersionTable.PSVersion.Major -ge 7) {
+              # PowerShell 7: Parallel
+              $results = @($allVideos | ForEach-Object -ThrottleLimit 8 -Parallel {
+                $video = $_
+                $ProjectRoot = $using:ProjectRoot
+                
+                . (Join-Path $ProjectRoot "Lib\Lib_FileSystem.ps1")
+                . (Join-Path $ProjectRoot "Lib\Lib_VideoThumbs.ps1")
+                
+                $thumbPath = Get-VideoThumbnailPath -VideoPath $video.FullPath
+                if (-not (Test-Path -LiteralPath $thumbPath)) {
+                  try {
+                    $thumb = New-VideoThumbnail -VideoPath $video.FullPath -Verbose:$false
+                    if ($thumb) { return "Created" } else { return "Failed" }
+                  } catch { return "Error" }
+                } else { return "Skipped" }
+              })
+              
+              $videoCount = @($results | Where-Object { $_ -eq "Created" }).Count
+            } else {
+              # PowerShell 5.1: Sequenziell
+              $videoCount = 0
+              foreach ($video in $allVideos) {
+                $thumbPath = Get-VideoThumbnailPath -VideoPath $video.FullPath
+                if (-not (Test-Path -LiteralPath $thumbPath)) {
+                  try {
+                    $thumb = New-VideoThumbnail -VideoPath $video.FullPath -Verbose:$false
+                    if ($thumb) { $videoCount++ }
+                  } catch { }
+                }
+              }
+            }
+            
+            if ($videoCount -gt 0) {
+              Write-Host "Video-Thumbnails erstellt: $videoCount"
+            }
           }
         }
-      }
-      
-      if ($videoCount -gt 0) {
-        Write-Host "Video-Thumbnails erstellt: $videoCount"
-      }
-    }
-  }
 
-  Send-ResponseText -Response $res -Text "OK" -StatusCode 200
-  continue
-}
+        Send-ResponseText -Response $res -Text "OK" -StatusCode 200
+        continue
+      }
+
       if ($path -eq "/img" -and $req.HttpMethod -eq "GET") {
         $q = $req.QueryString["path"]
         if ([string]::IsNullOrWhiteSpace($q)) {
