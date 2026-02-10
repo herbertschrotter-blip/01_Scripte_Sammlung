@@ -47,7 +47,8 @@ $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
 
 . (Join-Path $ProjectRoot "Lib\Lib_Http.ps1")
-. (Join-Path $ProjectRoot "Lib\Lib_Index.ps1")
+. (Join-Path $ProjectRoot "Lib\Lib_FileSystem.ps1")
+. (Join-Path $ProjectRoot "Lib\Lib_FastScan.ps1")
 . (Join-Path $ProjectRoot "Lib\Lib_PhotoGallery_UI.ps1")
 . (Join-Path $ProjectRoot "Lib\Lib_Dialogs.ps1")
 
@@ -84,7 +85,9 @@ if (-not (Test-Path -LiteralPath $RootPath -PathType Container)) {
 $RootFull = [System.IO.Path]::GetFullPath($RootPath)
 
 try {
-  $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt
+  Write-Host "Scanne Bildordner..."
+  $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt -UseCache
+  Write-Host "Fertig: $($Folders.Count) Ordner mit Bildern gefunden"
 } catch {
   Write-Err "E030" "Scan fehlgeschlagen: $($_.Exception.Message)"
   return
@@ -186,7 +189,7 @@ try {
         
         if ($newRoot -and (Test-Path -LiteralPath $newRoot -PathType Container)) {
           $RootFull = [System.IO.Path]::GetFullPath($newRoot)
-          $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt
+          $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt -UseCache
           Write-Host ("[INFO] Root gewechselt: {0}" -f $RootFull)
         }
 
@@ -333,7 +336,7 @@ try {
           }
         }
 
-        $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt
+        $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt -UseCache
 
         $msg = "Verschoben: OK=$ok | FAIL=$fail"
         if ($errors.Count -gt 0) {
@@ -384,8 +387,8 @@ try {
         $delImgs       = $selectedImgs
 
         # Lib-Inhalte als String einlesen
-        $libIndexPath = Join-Path $ProjectRoot "Lib\Lib_Index.ps1"
-        $libIndexContent = Get-Content -LiteralPath $libIndexPath -Raw
+        $libFileSystemPath = Join-Path $ProjectRoot "Lib\Lib_FileSystem.ps1"
+        $libFileSystemContent = Get-Content -LiteralPath $libFileSystemPath -Raw
 
         $ps = [PowerShell]::Create()
         $null = $ps.AddScript({
@@ -462,7 +465,7 @@ try {
         $null = $ps.AddParameter("DoHardDelete", $delHardDelete)
         $null = $ps.AddParameter("SelFolders", $delFolders)
         $null = $ps.AddParameter("SelImgs", $delImgs)
-        $null = $ps.AddParameter("LibCode", $libIndexContent)
+        $null = $ps.AddParameter("LibCode", $libFileSystemContent)
 
         $null = $ps.BeginInvoke()
         continue
