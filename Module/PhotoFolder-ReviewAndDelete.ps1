@@ -1502,68 +1502,92 @@ try {
         $json = @{ ok = 0; queued = ($selectedFolders.Count + $selectedImgs.Count); msg = "Löschung gestartet" } | ConvertTo-Json -Compress
         Send-ResponseText -Response $res -Text $json -StatusCode 200 -ContentType "application/json; charset=utf-8"
 
-        # --- Background-Löschung ---
+        # --- Background-Löschung mit geladenen Libs ---
         $delRootFull   = $RootFull
         $delHardDelete = [bool]$HardDelete
-        $delImageExt   = $ImageExt
         $delFolders    = $selectedFolders
         $delImgs       = $selectedImgs
 
+        # Lib-Inhalte als String einlesen
+        $libIndexPath = Join-Path $ProjectRoot "Lib\Lib_Index.ps1"
+        $libIndexContent = Get-Content -LiteralPath $libIndexPath -Raw
+
         $ps = [PowerShell]::Create()
         $null = $ps.AddScript({
-          param($RootFull, $DoHardDelete, $ImageExt, $SelFolders, $SelImgs,
-                $FnResolve, $FnGetRel, $FnDeleteFolder)
+          param($RootFull, $DoHardDelete, $SelFolders, $SelImgs, $LibCode)
 
+          # Lib-Funktionen in Runspace laden
+          Invoke-Expression $LibCode
+
+          # Assembly für FileSystem laden
           Add-Type -AssemblyName Microsoft.VisualBasic | Out-Null
 
-          # --- Bilder nach Ordner gruppieren ---
+          # --- Bilder nach Ordner gruppieren (für schnelleres Löschen) ---
           $imgsByFolder = @{}
           foreach ($relImg in $SelImgs) {
             try {
-              $imgFull = & $FnResolve -RootFull $RootFull -RelPath $relImg
+              $imgFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $relImg
               $parentDir = Split-Path -Parent $imgFull
-              $parentRel = & $FnGetRel -Base $RootFull -Full $parentDir
-              if (-not $imgsByFolder.ContainsKey($parentRel)) { $imgsByFolder[$parentRel] = @() }
+              $parentRel = Get-RelativePathSafe -Base $RootFull -Full $parentDir
+              
+              if (-not $imgsByFolder.ContainsKey($parentRel)) { 
+                $imgsByFolder[$parentRel] = @() 
+              }
               $imgsByFolder[$parentRel] += $imgFull
-            } catch { }
+            } catch {
+              Write-Warning "Fehler beim Auflösen von $relImg : $($_.Exception.Message)"
+            }
           }
 
-          # Einzel-Bilder löschen
+          # Bilder GRUPPIERT löschen (alle Bilder eines Ordners auf einmal)
           foreach ($folderRel in $imgsByFolder.Keys) {
-            foreach ($imgFull in $imgsByFolder[$folderRel]) {
-              try {
-                if (Test-Path -LiteralPath $imgFull -PathType Leaf) {
-                  if ($DoHardDelete) {
+            $imgFiles = $imgsByFolder[$folderRel]
+            
+            if ($DoHardDelete) {
+              # HardDelete: einzeln löschen
+              foreach ($imgFull in $imgFiles) {
+                try {
+                  if (Test-Path -LiteralPath $imgFull -PathType Leaf) {
                     Remove-Item -LiteralPath $imgFull -Force
-                  } else {
+                  }
+                } catch {
+                  Write-Warning "Fehler beim Löschen von ${imgFull}: $($_.Exception.Message)"
+                }
+              }
+            } else {
+              # Papierkorb: gruppiert löschen (schneller)
+              foreach ($imgFull in $imgFiles) {
+                try {
+                  if (Test-Path -LiteralPath $imgFull -PathType Leaf) {
                     [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
                       $imgFull,
                       [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
                       [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
                     )
                   }
+                } catch {
+                  Write-Warning "Fehler beim Löschen von ${imgFull}: $($_.Exception.Message)"
                 }
-              } catch { }
+              }
             }
           }
 
           # Ordner löschen
           foreach ($relFolder in $SelFolders) {
             try {
-              & $FnDeleteFolder -RootFull $RootFull -RelFolder $relFolder -HardDelete:$DoHardDelete
-            } catch { }
+              Delete-FolderSafe -RootFull $RootFull -RelFolder $relFolder -HardDelete:$DoHardDelete
+            } catch {
+              Write-Warning "Fehler beim Löschen von Ordner ${relFolder}: $($_.Exception.Message)"
+            }
           }
         })
 
-        # Funktionen als ScriptBlocks übergeben
+        # Parameter übergeben
         $null = $ps.AddParameter("RootFull", $delRootFull)
         $null = $ps.AddParameter("DoHardDelete", $delHardDelete)
-        $null = $ps.AddParameter("ImageExt", $delImageExt)
         $null = $ps.AddParameter("SelFolders", $delFolders)
         $null = $ps.AddParameter("SelImgs", $delImgs)
-        $null = $ps.AddParameter("FnResolve", ${function:Resolve-FullPathSafe})
-        $null = $ps.AddParameter("FnGetRel", ${function:Get-RelativePathSafe})
-        $null = $ps.AddParameter("FnDeleteFolder", ${function:Delete-FolderSafe})
+        $null = $ps.AddParameter("LibCode", $libIndexContent)
 
         $null = $ps.BeginInvoke()
         continue
