@@ -66,7 +66,15 @@ function Test-HasArchives {
     }
     
     $archiveList = @($archives)
-    $totalSize = ($archiveList | Measure-Object -Property Length -Sum).Sum
+    
+    # FIX: Null-Check für Measure-Object
+    $totalSize = 0
+    if ($archiveList.Count -gt 0) {
+      $sizeResult = $archiveList | Measure-Object -Property Length -Sum
+      if ($sizeResult -and $null -ne $sizeResult.Sum) {
+        $totalSize = $sizeResult.Sum
+      }
+    }
     
     return @{ 
       Count = $archiveList.Count
