@@ -28,6 +28,7 @@ Fehlercodes:
   E020 HttpListener konnte nicht gestartet werden (Port belegt / Rechte)
   E030 Scan fehlgeschlagen
   E040 Löschen fehlgeschlagen
+  E050 Verschieben fehlgeschlagen
 #>
 
 param(
@@ -45,10 +46,11 @@ $ErrorActionPreference = "Stop"
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
 
-. (Join-Path $ProjectRoot "Lib\Lib_Web.ps1")
+. (Join-Path $ProjectRoot "Lib\Lib_Http.ps1")
 . (Join-Path $ProjectRoot "Lib\Lib_Index.ps1")
 . (Join-Path $ProjectRoot "Lib\Lib_PhotoGallery_UI.ps1")
 . (Join-Path $ProjectRoot "Lib\Lib_Dialogs.ps1")
+
 # -----------------------------
 # Einstellungen
 # -----------------------------
@@ -179,18 +181,19 @@ try {
         continue
       }
 
-if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
-  $newRoot = Show-FolderDialog -Description "Neuen Root-Ordner auswählen" -ShowNewFolderButton $false -TopMost $true
-  
-  if ($newRoot -and (Test-Path -LiteralPath $newRoot -PathType Container)) {
-    $RootFull = [System.IO.Path]::GetFullPath($newRoot)
-    $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt
-    Write-Host ("[INFO] Root gewechselt: {0}" -f $RootFull)
-  }
+      if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
+        $newRoot = Show-FolderDialog -Description "Neuen Root-Ordner auswählen" -ShowNewFolderButton $false -TopMost $true
+        
+        if ($newRoot -and (Test-Path -LiteralPath $newRoot -PathType Container)) {
+          $RootFull = [System.IO.Path]::GetFullPath($newRoot)
+          $Folders = Scan-ImageFolders -Root $RootFull -ImageExt $ImageExt
+          Write-Host ("[INFO] Root gewechselt: {0}" -f $RootFull)
+        }
 
-  Send-ResponseText -Response $res -Text "OK" -StatusCode 200
-  continue
-}
+        Send-ResponseText -Response $res -Text "OK" -StatusCode 200
+        continue
+      }
+
       if ($path -eq "/img" -and $req.HttpMethod -eq "GET") {
         $q = $req.QueryString["path"]
         if ([string]::IsNullOrWhiteSpace($q)) {
@@ -251,14 +254,16 @@ if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
           continue
         }
 
-# Zielordner per Dialog wählen
-$destDir = Show-FolderDialog -Description "Zielordner für Verschieben auswählen" -ShowNewFolderButton $true -TopMost $true
+        # Zielordner per Dialog wählen
+        $destDir = Show-FolderDialog -Description "Zielordner für Verschieben auswählen" -ShowNewFolderButton $true -TopMost $true
 
-if (-not $destDir) {
-  $json = @{ cancelled = $true; msg = "Abgebrochen" } | ConvertTo-Json -Compress
-  Send-ResponseText -Response $res -Text $json -StatusCode 200 -ContentType "application/json; charset=utf-8"
-  continue
-}        if (-not (Test-Path -LiteralPath $destDir -PathType Container)) {
+        if (-not $destDir) {
+          $json = @{ cancelled = $true; msg = "Abgebrochen" } | ConvertTo-Json -Compress
+          Send-ResponseText -Response $res -Text $json -StatusCode 200 -ContentType "application/json; charset=utf-8"
+          continue
+        }
+
+        if (-not (Test-Path -LiteralPath $destDir -PathType Container)) {
           $json = @{ error = "Zielordner existiert nicht" } | ConvertTo-Json -Compress
           Send-ResponseText -Response $res -Text $json -StatusCode 400 -ContentType "application/json; charset=utf-8"
           continue
