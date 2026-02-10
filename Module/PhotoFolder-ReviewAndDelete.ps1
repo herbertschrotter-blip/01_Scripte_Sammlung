@@ -58,6 +58,7 @@ $ProjectRoot = Split-Path -Parent $ScriptDir
 . (Join-Path $ProjectRoot "Lib\Lib_VideoThumbs.ps1")
 . (Join-Path $ProjectRoot "Lib\Lib_PhotoGallery_UI.ps1")
 . (Join-Path $ProjectRoot "Lib\Lib_Dialogs.ps1")
+. (Join-Path $ProjectRoot "Lib\Lib_ArchiveExtractor.ps1")
 
 # -----------------------------
 # Einstellungen
@@ -98,6 +99,28 @@ $RootFull = [System.IO.Path]::GetFullPath($RootPath)
 
 # Video-Metadata Cache initialisieren
 $script:VideoMetadataCache = @{}
+
+# ------------------------------------------------------------
+# ARCHIVE-EXTRAKTION (vor Scan)
+# ------------------------------------------------------------
+Write-Host "Prüfe auf Archive..." -ForegroundColor DarkGray
+$archiveCheck = Test-HasArchives -RootPath $RootFull -QuickCheck
+
+if ($archiveCheck.HasArchives) {
+  Write-Host ""
+  Write-Host "┌────────────────────────────────────────────┐" -ForegroundColor Yellow
+  Write-Host ("│  {0,-42} │" -f "$($archiveCheck.Count) Archive(s) gefunden!") -ForegroundColor Yellow
+  Write-Host "└────────────────────────────────────────────┘" -ForegroundColor Yellow
+  
+  $result = Invoke-ArchiveExtraction -RootPath $RootFull
+  
+  if ($result.Success -and $result.ExtractedCount -gt 0) {
+    Write-Host "Warte 2 Sekunden damit Dateisystem aktualisiert..." -ForegroundColor DarkGray
+    Start-Sleep -Seconds 2
+  }
+} else {
+  Write-Host "Keine Archive gefunden" -ForegroundColor DarkGray
+}
 
 try {
   Write-Host "Scanne Bild- und Video-Ordner..."
@@ -362,6 +385,19 @@ try {
         
         if ($newRoot -and (Test-Path -LiteralPath $newRoot -PathType Container)) {
           $RootFull = [System.IO.Path]::GetFullPath($newRoot)
+          
+          # ARCHIVE-EXTRAKTION (vor Scan)
+          Write-Host "Prüfe auf Archive..." -ForegroundColor DarkGray
+          $archiveCheck = Test-HasArchives -RootPath $RootFull -QuickCheck
+          
+          if ($archiveCheck.HasArchives) {
+            Write-Host "Archive gefunden - extrahiere..." -ForegroundColor Cyan
+            $result = Invoke-ArchiveExtraction -RootPath $RootFull
+            
+            if ($result.Success -and $result.ExtractedCount -gt 0) {
+              Start-Sleep -Seconds 2
+            }
+          }
           
           # Scan
           Write-Host ("[INFO] Root gewechselt: {0}" -f $RootFull)
@@ -690,58 +726,6 @@ try {
         }
         continue
       }
-
-if ($path -eq "/openvlc" -and $req.HttpMethod -eq "POST") {
-  $body = Read-RequestBody -Request $req
-  $form = Parse-FormUrlEncoded -Body $body
-  
-  $rel = $form["path"]
-  if ([string]::IsNullOrWhiteSpace($rel)) {
-    Send-ResponseText -Response $res -Text '{"error":"Missing path"}' -StatusCode 400 -ContentType "application/json"
-    continue
-  }
-  
-  try {
-    $videoFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $rel
-    
-    if (-not (Test-Path -LiteralPath $videoFull)) {
-      Send-ResponseText -Response $res -Text '{"error":"Video not found"}' -StatusCode 404 -ContentType "application/json"
-      continue
-    }
-    
-    # VLC finden
-    $vlcPaths = @(
-      "C:\Program Files\VideoLAN\VLC\vlc.exe",
-      "C:\Program Files (x86)\VideoLAN\VLC\vlc.exe",
-      "${env:ProgramFiles}\VideoLAN\VLC\vlc.exe",
-      "${env:ProgramFiles(x86)}\VideoLAN\VLC\vlc.exe"
-    )
-    
-    $vlcExe = $null
-    foreach ($p in $vlcPaths) {
-      if (Test-Path -LiteralPath $p) {
-        $vlcExe = $p
-        break
-      }
-    }
-    
-    if (-not $vlcExe) {
-      # Fallback: Standard-Player
-      Start-Process -FilePath $videoFull
-    } else {
-      # VLC starten
-      Start-Process -FilePath $vlcExe -ArgumentList "`"$videoFull`""
-    }
-    
-    $json = @{ success = $true } | ConvertTo-Json -Compress
-    Send-ResponseText -Response $res -Text $json -ContentType "application/json"
-    
-  } catch {
-    $json = @{ error = $_.Exception.Message } | ConvertTo-Json -Compress
-    Send-ResponseText -Response $res -Text $json -StatusCode 500 -ContentType "application/json"
-  }
-  continue
-}
 
       if ($path -eq "/move" -and $req.HttpMethod -eq "POST") {
         $body = Read-RequestBody -Request $req
