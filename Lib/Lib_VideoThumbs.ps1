@@ -451,9 +451,9 @@ function Test-NeedsConversion {
     "msmpeg4", "msmpeg4v2", "msmpeg4v3",
     "flv1", "vp6", "vp6f",
     "rv10", "rv20", "rv30", "rv40",
-    "wmv1", "wmv2", "wmv3", "vc1"
+    "wmv1", "wmv2", "wmv3", "vc1" , "mpeg4"
   )
   $codec = ($metadata.VideoCodec -replace '[^a-z0-9]', '').ToLower()
-  Write-Verbose "Video-Codec: '$($metadata.VideoCodec)' | Normalisiert: '$codec' | Needs Conversion: $($needsConversion -contains $codec)"
+Write-Host "[TEST] Video-Codec: '$($metadata.VideoCodec)' | Normalisiert: '$codec' | Needs Conversion: $($needsConversion -contains $codec)" -ForegroundColor Yellow  
   return $needsConversion -contains $codec
 }
