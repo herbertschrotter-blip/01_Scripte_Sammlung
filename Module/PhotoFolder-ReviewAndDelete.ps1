@@ -742,6 +742,52 @@ if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
         continue
       }
 
+      if ($path -eq "/openvlc" -and $req.HttpMethod -eq "POST") {
+        $body = Read-RequestBody -Request $req
+        $form = Parse-FormUrlEncoded -Body $body
+        
+        $rel = $form["path"]
+        if ([string]::IsNullOrWhiteSpace($rel)) {
+          Send-ResponseText -Response $res -Text '{"error":"Missing path"}' -StatusCode 400 -ContentType "application/json"
+          continue
+        }
+        
+        try {
+          $videoFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $rel
+          
+          if (-not (Test-Path -LiteralPath $videoFull)) {
+            Send-ResponseText -Response $res -Text '{"error":"Video not found"}' -StatusCode 404 -ContentType "application/json"
+            continue
+          }
+          
+          # VLC öffnen
+          $vlcPaths = @(
+            "C:\Program Files\VideoLAN\VLC\vlc.exe",
+            "C:\Program Files (x86)\VideoLAN\VLC\vlc.exe",
+            "$env:ProgramFiles\VideoLAN\VLC\vlc.exe",
+            "${env:ProgramFiles(x86)}\VideoLAN\VLC\vlc.exe"
+          )
+          
+          $vlcExe = $vlcPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+          
+          if (-not $vlcExe) {
+            Send-ResponseText -Response $res -Text '{"error":"VLC nicht gefunden. Bitte installiere VLC Media Player."}' -StatusCode 404 -ContentType "application/json"
+            continue
+          }
+          
+          Start-Process -FilePath $vlcExe -ArgumentList "`"$videoFull`"" -ErrorAction Stop
+          
+          $json = @{ ok = $true } | ConvertTo-Json -Compress
+          Send-ResponseText -Response $res -Text $json -ContentType "application/json"
+          
+        } catch {
+          $json = @{ error = $_.Exception.Message } | ConvertTo-Json -Compress
+          Send-ResponseText -Response $res -Text $json -StatusCode 500 -ContentType "application/json"
+        }
+        
+        continue
+      }
+
       if ($path -eq "/move" -and $req.HttpMethod -eq "POST") {
         $body = Read-RequestBody -Request $req
         $form = Parse-FormUrlEncoded -Body $body
