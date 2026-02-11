@@ -380,95 +380,111 @@ if ($path -eq "/" -and $req.HttpMethod -eq "GET") {
         continue
       }
 
-      if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
+if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
         $newRoot = Show-FolderDialog -Description "Neuen Root-Ordner auswählen" -ShowNewFolderButton $false -TopMost $true
         
-        if ($newRoot -and (Test-Path -LiteralPath $newRoot -PathType Container)) {
-          $RootFull = [System.IO.Path]::GetFullPath($newRoot)
+        if (-not $newRoot) {
+          # Abgebrochen
+          $json = @{ cancelled = $true; msg = "Abgebrochen" } | ConvertTo-Json -Compress
+          Send-ResponseText -Response $res -Text $json -StatusCode 200 -ContentType "application/json; charset=utf-8"
+          continue
+        }
+        
+        if (-not (Test-Path -LiteralPath $newRoot -PathType Container)) {
+          # Ungültiger Pfad
+          $json = @{ error = "Ordner existiert nicht" } | ConvertTo-Json -Compress
+          Send-ResponseText -Response $res -Text $json -StatusCode 400 -ContentType "application/json; charset=utf-8"
+          continue
+        }
+        
+        # Root wechseln
+        $RootFull = [System.IO.Path]::GetFullPath($newRoot)
+        
+        # ARCHIVE-EXTRAKTION (vor Scan)
+        Write-Host "Prüfe auf Archive..." -ForegroundColor DarkGray
+        $archiveCheck = Test-HasArchives -RootPath $RootFull -QuickCheck
+        
+        if ($archiveCheck.HasArchives) {
+          Write-Host "Archive gefunden - extrahiere..." -ForegroundColor Cyan
+          $result = Invoke-ArchiveExtraction -RootPath $RootFull
           
-          # ARCHIVE-EXTRAKTION (vor Scan)
-          Write-Host "Prüfe auf Archive..." -ForegroundColor DarkGray
-          $archiveCheck = Test-HasArchives -RootPath $RootFull -QuickCheck
-          
-          if ($archiveCheck.HasArchives) {
-            Write-Host "Archive gefunden - extrahiere..." -ForegroundColor Cyan
-            $result = Invoke-ArchiveExtraction -RootPath $RootFull
-            
-            if ($result.Success -and $result.ExtractedCount -gt 0) {
-              Start-Sleep -Seconds 2
+          if ($result.Success -and $result.ExtractedCount -gt 0) {
+            Start-Sleep -Seconds 2
+          }
+        }
+        
+        # Scan
+        Write-Host ("[INFO] Root gewechselt: {0}" -f $RootFull)
+        $script:Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache
+        
+        # Video-Thumbnails pre-generieren (parallel wie beim Start)
+        Write-Host "Generiere Video-Thumbnails..."
+        
+        # Alle Videos sammeln
+        $allVideos = @()
+        foreach ($folder in $script:Folders) {
+          foreach ($mediaRel in $folder.ImagesRel) {
+            if (Test-IsVideoFile -Path $mediaRel) {
+              try {
+                $videoFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $mediaRel
+                
+                # Metadaten auslesen und in Cache speichern
+                $metadata = Get-VideoMetadata -VideoPath $videoFull
+                $script:VideoMetadataCache[$mediaRel] = $metadata
+                
+                $allVideos += [PSCustomObject]@{ RelPath = $mediaRel; FullPath = $videoFull }
+              } catch { }
             }
           }
-          
-          # Scan
-Write-Host ("[INFO] Root gewechselt: {0}" -f $RootFull)
-          $script:Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache          
-          # Video-Thumbnails pre-generieren (parallel wie beim Start)
-          Write-Host "Generiere Video-Thumbnails..."
-          
-          # Alle Videos sammeln
-          $allVideos = @()
-          foreach ($folder in $Folders) {
-            foreach ($mediaRel in $folder.ImagesRel) {
-              if (Test-IsVideoFile -Path $mediaRel) {
+        }
+        
+        $videoTotal = $allVideos.Count
+        
+        if ($videoTotal -gt 0) {
+          if ($PSVersionTable.PSVersion.Major -ge 7) {
+            # PowerShell 7: Parallel
+            $results = @($allVideos | ForEach-Object -ThrottleLimit 8 -Parallel {
+              $video = $_
+              $ProjectRoot = $using:ProjectRoot
+              
+              . (Join-Path $ProjectRoot "Lib\Lib_FileSystem.ps1")
+              . (Join-Path $ProjectRoot "Lib\Lib_VideoThumbs.ps1")
+              
+              $thumbPath = Get-VideoThumbnailPath -VideoPath $video.FullPath
+              if (-not (Test-Path -LiteralPath $thumbPath)) {
                 try {
-                  $videoFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $mediaRel
-                  
-                  # Metadaten auslesen und in Cache speichern
-                  $metadata = Get-VideoMetadata -VideoPath $videoFull
-                  $script:VideoMetadataCache[$mediaRel] = $metadata
-                  
-                  $allVideos += [PSCustomObject]@{ RelPath = $mediaRel; FullPath = $videoFull }
+                  $thumb = New-VideoThumbnail -VideoPath $video.FullPath -Verbose:$false
+                  if ($thumb) { return "Created" } else { return "Failed" }
+                } catch { return "Error" }
+              } else { return "Skipped" }
+            })
+            
+            $videoCount = @($results | Where-Object { $_ -eq "Created" }).Count
+          } else {
+            # PowerShell 5.1: Sequenziell
+            $videoCount = 0
+            foreach ($video in $allVideos) {
+              $thumbPath = Get-VideoThumbnailPath -VideoPath $video.FullPath
+              if (-not (Test-Path -LiteralPath $thumbPath)) {
+                try {
+                  $thumb = New-VideoThumbnail -VideoPath $video.FullPath -Verbose:$false
+                  if ($thumb) { $videoCount++ }
                 } catch { }
               }
             }
           }
           
-          $videoTotal = $allVideos.Count
-          
-          if ($videoTotal -gt 0) {
-            if ($PSVersionTable.PSVersion.Major -ge 7) {
-              # PowerShell 7: Parallel
-              $results = @($allVideos | ForEach-Object -ThrottleLimit 8 -Parallel {
-                $video = $_
-                $ProjectRoot = $using:ProjectRoot
-                
-                . (Join-Path $ProjectRoot "Lib\Lib_FileSystem.ps1")
-                . (Join-Path $ProjectRoot "Lib\Lib_VideoThumbs.ps1")
-                
-                $thumbPath = Get-VideoThumbnailPath -VideoPath $video.FullPath
-                if (-not (Test-Path -LiteralPath $thumbPath)) {
-                  try {
-                    $thumb = New-VideoThumbnail -VideoPath $video.FullPath -Verbose:$false
-                    if ($thumb) { return "Created" } else { return "Failed" }
-                  } catch { return "Error" }
-                } else { return "Skipped" }
-              })
-              
-              $videoCount = @($results | Where-Object { $_ -eq "Created" }).Count
-            } else {
-              # PowerShell 5.1: Sequenziell
-              $videoCount = 0
-              foreach ($video in $allVideos) {
-                $thumbPath = Get-VideoThumbnailPath -VideoPath $video.FullPath
-                if (-not (Test-Path -LiteralPath $thumbPath)) {
-                  try {
-                    $thumb = New-VideoThumbnail -VideoPath $video.FullPath -Verbose:$false
-                    if ($thumb) { $videoCount++ }
-                  } catch { }
-                }
-              }
-            }
-            
-            if ($videoCount -gt 0) {
-              Write-Host "Video-Thumbnails erstellt: $videoCount"
-            }
+          if ($videoCount -gt 0) {
+            Write-Host "Video-Thumbnails erstellt: $videoCount"
           }
         }
 
-        Send-ResponseText -Response $res -Text "OK" -StatusCode 200
+        # JSON zurückgeben
+        $json = @{ ok = $true; msg = "Root gewechselt zu: $RootFull" } | ConvertTo-Json -Compress
+        Send-ResponseText -Response $res -Text $json -StatusCode 200 -ContentType "application/json; charset=utf-8"
         continue
       }
-
+            
       if ($path -eq "/img" -and $req.HttpMethod -eq "GET") {
         $q = $req.QueryString["path"]
         if ([string]::IsNullOrWhiteSpace($q)) {
