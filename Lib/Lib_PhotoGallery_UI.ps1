@@ -319,8 +319,13 @@ function Get-PhotoGalleryHTML {
 #viewerVideo{
   max-width:98vw;
   max-height:98vh;
+  width: auto;
+  height: auto;
+  min-width: 1920px;
+  min-height: 1080px;
   border-radius:var(--radius);
   display:none;
+  object-fit: contain;
 }
 
   #viewerX{
