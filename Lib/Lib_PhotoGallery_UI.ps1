@@ -1227,21 +1227,28 @@ document.addEventListener("keydown", (e) => {
   const cur = window.selState.focused;
   const curIdx = cur ? wraps.indexOf(cur) : -1;
 
+  // Pfeiltasten: Nur bei fokussiertem Bild navigieren, sonst normal scrollen
   if(e.key === "ArrowRight" || e.key === "ArrowLeft" ||
      e.key === "ArrowDown" || e.key === "ArrowUp"){
-    e.preventDefault();
-    let nextIdx;
-    if(e.key === "ArrowRight" || e.key === "ArrowDown"){
-      nextIdx = curIdx < 0 ? 0 : Math.min(curIdx + 1, wraps.length - 1);
-    } else {
-      nextIdx = curIdx < 0 ? 0 : Math.max(curIdx - 1, 0);
-    }
-    const next = wraps[nextIdx];
+    
+    // NUR preventDefault wenn ein Bild bereits fokussiert ist
+    if (cur) {
+      e.preventDefault();
+      
+      let nextIdx;
+      if(e.key === "ArrowRight" || e.key === "ArrowDown"){
+        nextIdx = curIdx < 0 ? 0 : Math.min(curIdx + 1, wraps.length - 1);
+      } else {
+        nextIdx = curIdx < 0 ? 0 : Math.max(curIdx - 1, 0);
+      }
+      const next = wraps[nextIdx];
 
-    if(e.shiftKey){
-      setWrapSelected(next, true);
+      if(e.shiftKey){
+        setWrapSelected(next, true);
+      }
+      setFocus(next);
     }
-    setFocus(next);
+    // Wenn KEIN Bild fokussiert: Browser-Standard (Seite scrollen)
     return;
   }
 
@@ -1750,7 +1757,7 @@ function scrollToNextFolder() {
     }, 100);
   }
 }
-  
+
 </script>
 </body>
 </html>
