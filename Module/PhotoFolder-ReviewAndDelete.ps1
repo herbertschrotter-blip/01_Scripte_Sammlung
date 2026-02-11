@@ -59,6 +59,7 @@ $ProjectRoot = Split-Path -Parent $ScriptDir
 . (Join-Path $ProjectRoot "Lib\Lib_PhotoGallery_UI.ps1")
 . (Join-Path $ProjectRoot "Lib\Lib_Dialogs.ps1")
 . (Join-Path $ProjectRoot "Lib\Lib_ArchiveExtractor.ps1")
+. (Join-Path $ProjectRoot "Lib\Lib_FlattenAndMove.ps1")
 
 # -----------------------------
 # Einstellungen
@@ -489,6 +490,35 @@ if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
         Send-ResponseText -Response $res -Text $json -StatusCode 200 -ContentType "application/json; charset=utf-8"
         continue
       }
+
+# ========== FLATTEN & MOVE ==========
+if ($path -eq "/flattenandmove" -and $req.HttpMethod -eq "POST") {
+  try {
+    # SOFORT antworten (nicht warten!)
+    $json = @{ ok = $true; msg = "Flatten & Move gestartet - siehe PowerShell Console!" } | ConvertTo-Json -Compress
+    
+    $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
+    $res.ContentType = "application/json"
+    $res.ContentLength64 = $buffer.Length
+    $res.OutputStream.Write($buffer, 0, $buffer.Length)
+    $res.Close()
+    
+    # DANACH: Flatten & Move starten (NON-BLOCKING)
+    # Einfach direkt aufrufen (läuft im gleichen PowerShell-Prozess)
+    Invoke-FlattenAndMove -RootPath $RootFull
+    
+    # Nach Flatten & Move: Neu scannen FALLS Root noch existiert
+    if (Test-Path -LiteralPath $RootFull) {
+      Write-Host "`nScanne Root neu..." -ForegroundColor Cyan
+      $script:Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache
+    }
+    
+  } catch {
+    Write-Error "Fehler bei Flatten & Move: $_"
+  }
+  
+  continue
+}
             
       if ($path -eq "/img" -and $req.HttpMethod -eq "GET") {
         $q = $req.QueryString["path"]
