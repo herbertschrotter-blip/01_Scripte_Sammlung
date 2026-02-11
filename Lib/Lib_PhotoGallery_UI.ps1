@@ -1137,21 +1137,14 @@ const cacheBust = "?v=" + Date.now();
     handleImgClick(ev, wrap);
   });
 
-  img.addEventListener("dblclick", (ev) => {
+img.addEventListener("dblclick", (ev) => {
     ev.stopPropagation();
-    if(isPreview){
-      const pUrls = (window.previewImages || {})[folderKey] || [];
-      const pTypes = (window.previewTypes || {})[folderKey] || [];
-      const pIdx = pUrls.indexOf(src);
-      openViewerWith(folderKey, pUrls, pTypes, pIdx >= 0 ? pIdx : 0);
-    } else {
-      const all = window.folderImages[folderKey] || [src];
-      const allTypes = window.folderTypes[folderKey] || [type];
-      const i = all.indexOf(src);
-      openViewerWith(folderKey, all, allTypes, i >= 0 ? i : 0);
-    }
-  });
-
+    // IMMER alle Bilder des Ordners verwenden
+    const all = window.folderImages[folderKey] || [src];
+    const allTypes = window.folderTypes[folderKey] || [type];
+    const i = all.indexOf(src);
+    openViewerWith(folderKey, all, allTypes, i >= 0 ? i : 0);
+});
   wrap.appendChild(cb);
   wrap.appendChild(img);
 
