@@ -383,6 +383,11 @@ if ($path -eq "/" -and $req.HttpMethod -eq "GET") {
 if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
         $newRoot = Show-FolderDialog -Description "Neuen Root-Ordner auswählen" -ShowNewFolderButton $false -TopMost $true
         
+        # Alle offenen File-Handles schließen (wichtig für Verschieben/Löschen)
+[System.GC]::Collect()
+[System.GC]::WaitForPendingFinalizers()
+[System.GC]::Collect()
+        
         if (-not $newRoot) {
           # Abgebrochen
           $json = @{ cancelled = $true; msg = "Abgebrochen" } | ConvertTo-Json -Compress
