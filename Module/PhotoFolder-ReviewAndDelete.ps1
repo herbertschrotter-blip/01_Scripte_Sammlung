@@ -882,9 +882,6 @@ if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
           continue
         }
 
-        # Sofort antworten – Löschung läuft im Hintergrund
-        $json = @{ ok = 0; queued = ($selectedFolders.Count + $selectedImgs.Count); msg = "Löschung gestartet" } | ConvertTo-Json -Compress
-        Send-ResponseText -Response $res -Text $json -StatusCode 200 -ContentType "application/json; charset=utf-8"
 
         # --- Background-Löschung mit geladenen Libs ---
         $delRootFull   = $RootFull
@@ -1025,18 +1022,32 @@ if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
         $timeout = [TimeSpan]::FromSeconds(10)
         $finished = $handle.AsyncWaitHandle.WaitOne($timeout)
         
-        if ($finished) {
+if ($finished) {
           Write-Host "[DELETE] Background-Job fertig - scanne neu..." -ForegroundColor Green
           
           # NEU SCANNEN mit script: Scope!
           $script:Folders = Scan-ImageFolders -Root $RootFull -ImageExt $MediaExt -UseCache
           
           Write-Host "[DELETE] Neu gescannt: $($script:Folders.Count) Ordner" -ForegroundColor Green
+          
+          # Response mit gelöschten Items
+          $deletedInfo = @{
+            ok = $true
+            msg = "Gelöscht: $($selectedFolders.Count) Ordner, $($selectedImgs.Count) Medien"
+            deletedFolders = @($selectedFolders)
+            deletedImages = @($selectedImgs)
+          }
+          $json = $deletedInfo | ConvertTo-Json -Compress
+          Send-ResponseText -Response $res -Text $json -StatusCode 200 -ContentType "application/json; charset=utf-8"
         } else {
           Write-Warning "[DELETE] Timeout - Background-Job dauert zu lange"
+          
+          # Timeout-Response
+          $json = @{ ok = $false; error = "Timeout"; msg = "Löschung dauert zu lange" } | ConvertTo-Json -Compress
+          Send-ResponseText -Response $res -Text $json -StatusCode 500 -ContentType "application/json; charset=utf-8"
         }
         
-        continue
+        continue        
       }
 
 # Warte kurz und scanne neu

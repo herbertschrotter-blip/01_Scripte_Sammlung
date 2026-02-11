@@ -41,6 +41,7 @@ function Get-PhotoGalleryHTML {
 
   $hardInfo = if ($HardDelete) { "<b>HARD DELETE</b> (ohne Papierkorb!)" } else { "Papierkorb" }
 
+  # language=html
   return @"
 <!doctype html>
 <html lang="de">
@@ -675,22 +676,29 @@ fetch("/delete", {
     console.log("Delete Response Status:", r.status);
     return r.json();
   })
-  .then(data => {
+.then(data => {
     console.log("Delete Response Data:", data);
     overlay.classList.remove("active");
     
-    // Cache leeren
-    if ('caches' in window) {
-      caches.keys().then(names => {
-        names.forEach(name => caches.delete(name));
+    // Selektives Cache-Clearing: Nur gelöschte Items
+    if ('caches' in window && data.deletedImages) {
+      caches.open('photofolder-v1').then(cache => {
+        data.deletedImages.forEach(imgPath => {
+          const thumbUrl = '/img?path=' + encodeURIComponent(imgPath);
+          const videoThumbUrl = '/videothumb?path=' + encodeURIComponent(imgPath);
+          cache.delete(thumbUrl);
+          cache.delete(videoThumbUrl);
+        });
       });
     }
     
-    // Hard Reload mit Timestamp
-    setTimeout(() => {
-      window.location.href = window.location.pathname + "?t=" + Date.now();
-    }, 500);
+    // DOM-Update statt Reload
+    updateDOMAfterDelete(data.deletedFolders, data.deletedImages);
+    
+    // Scroll zum nächsten Ordner (OHNE Reload!)
+    scrollToNextFolder();
   })
+
   .catch(err => {
     console.error("Delete Error:", err);
     overlay.classList.remove("active");
@@ -1565,6 +1573,74 @@ function openWithVLC() {
   .catch(err => {
     alert("Fehler: " + err);
   });
+}
+
+function updateDOMAfterDelete(deletedFolders, deletedImages) {
+  // 1. Gelöschte Ordner entfernen
+  deletedFolders.forEach(folderPath => {
+    const card = document.querySelector('.card[data-path="' + folderPath + '"]');
+    if (card) {
+      card.remove();
+      console.log('Ordner entfernt:', folderPath);
+    }
+  });
+  
+  // 2. Gelöschte Bilder entfernen
+  deletedImages.forEach(imgPath => {
+    const cb = document.querySelector('.imgCb[data-rel="' + imgPath + '"]');
+    if (cb) {
+      const wrap = cb.closest('.imgWrap');
+      if (wrap) {
+        wrap.remove();
+        console.log('Bild entfernt:', imgPath);
+      }
+    }
+  });
+  
+  // 3. Bild-Counter aktualisieren
+  document.querySelectorAll('.card').forEach(card => {
+    const folderKey = card.dataset.path;
+    const thumbsContainer = card.querySelector('.thumbs');
+    const previewContainer = card.querySelector('.previewRow');
+    
+    // Zähle übrige Bilder
+    const remainingThumbs = thumbsContainer ? 
+      thumbsContainer.querySelectorAll('.imgWrap').length : 0;
+    const remainingPreviews = previewContainer ? 
+      previewContainer.querySelectorAll('.imgWrap').length : 0;
+    
+    const totalRemaining = Math.max(remainingThumbs, remainingPreviews);
+    
+    // Counter aktualisieren
+    const meta = card.querySelector('.meta');
+    if (meta) {
+      meta.textContent = '(' + totalRemaining + ')';
+    }
+    
+    // Ordner entfernen wenn leer
+    if (totalRemaining === 0) {
+      card.remove();
+      console.log('Leerer Ordner entfernt:', folderKey);
+    }
+  });
+}
+
+function scrollToNextFolder() {
+  const savedAnchor = sessionStorage.getItem('scrollAnchor');
+  if (savedAnchor) {
+    setTimeout(function() {
+      const card = document.querySelector('.card[data-path="' + savedAnchor + '"]');
+      if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        card.style.transition = 'background 0.3s ease';
+        card.style.background = '#e0f2fe';
+        setTimeout(function() {
+          card.style.background = '';
+        }, 1000);
+      }
+      sessionStorage.removeItem('scrollAnchor');
+    }, 100);
+  }
 }
 
 
