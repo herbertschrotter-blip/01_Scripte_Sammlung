@@ -660,8 +660,26 @@ if (nextCard) {
   const overlay = document.getElementById("loadOverlay");
   const loadMsg = document.getElementById("loadMsg");
   overlay.classList.add("active");
-  loadMsg.textContent = "Lösche " + (folders.length + imgs.length) + " Elemente…";
+  
+  
+  
+// Intelligente Zählung: Ordner ODER enthaltene Bilder (nicht beides)
+let deleteCount = folders.length;
 
+// Zähle nur Bilder die NICHT in bereits markierten Ordnern sind
+const folderPaths = new Set(folders.map(cb => cb.value));
+imgs.forEach(cb => {
+  const wrap = cb.closest('.imgWrap');
+  if (wrap) {
+    const folderKey = wrap.dataset.folderKey;
+    // Nur zählen wenn der Ordner NICHT bereits markiert ist
+    if (!folderPaths.has(folderKey)) {
+      deleteCount++;
+    }
+  }
+});
+
+loadMsg.textContent = "Lösche " + deleteCount + " Element" + (deleteCount !== 1 ? "e" : "") + "…";
   const params = new URLSearchParams();
   params.append("confirm", "1");
   folders.forEach(cb => params.append("folder", cb.value));
@@ -1125,7 +1143,7 @@ function createImgWrap(src, rel, type, folderKey, idx, isPreview){
   });
   cb.addEventListener("click", (ev) => ev.stopPropagation());
 
-const cacheBust = "?v=" + Date.now();
+  const cacheBust = "?v=" + Date.now();
   const imgSrc = src.includes("?") ? src + "&v=" + Date.now() : src + cacheBust;
   
   const img = document.createElement("img");
@@ -1133,18 +1151,36 @@ const cacheBust = "?v=" + Date.now();
   img.loading = "lazy";
   img.src = imgSrc;
 
+  // ========== GEÄNDERT: Click-Delay für Doppelklick-Erkennung ==========
+  let clickTimer = null;
+  
   img.addEventListener("click", (ev) => {
-    handleImgClick(ev, wrap);
+    // Verhindere Markierung wenn Doppelklick folgt
+    if (clickTimer !== null) return;
+    
+    clickTimer = setTimeout(() => {
+      handleImgClick(ev, wrap);
+      clickTimer = null;
+    }, 250); // 250ms Wartezeit für Doppelklick
   });
 
-img.addEventListener("dblclick", (ev) => {
+  img.addEventListener("dblclick", (ev) => {
     ev.stopPropagation();
+    
+    // Doppelklick erkannt - Click-Timer abbrechen
+    if (clickTimer !== null) {
+      clearTimeout(clickTimer);
+      clickTimer = null;
+    }
+    
     // IMMER alle Bilder des Ordners verwenden
     const all = window.folderImages[folderKey] || [src];
     const allTypes = window.folderTypes[folderKey] || [type];
     const i = all.indexOf(src);
     openViewerWith(folderKey, all, allTypes, i >= 0 ? i : 0);
-});
+  });
+  // ========== ENDE DER ÄNDERUNG ==========
+
   wrap.appendChild(cb);
   wrap.appendChild(img);
 
