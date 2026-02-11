@@ -472,7 +472,50 @@ function Get-PhotoGalleryHTML {
     margin-bottom:12px;
   }
   @keyframes spin{to{transform:rotate(360deg);}}
-</style>
+/* Variante C: Conversion Animations */
+  @keyframes slideDown {
+    from { transform: translate(-50%, -20px); opacity: 0; }
+    to { transform: translate(-50%, 0); opacity: 1; }
+  }
+  @keyframes slideUp {
+    from { transform: translate(-50%, 0); opacity: 1; }
+    to { transform: translate(-50%, -20px); opacity: 0; }
+  }
+  @keyframes fadeInUp {
+    from { transform: translate(-50%, 20px); opacity: 0; }
+    to { transform: translate(-50%, 0); opacity: 1; }
+  }
+  @keyframes fadeOutDown {
+    from { transform: translate(-50%, 0); opacity: 1; }
+    to { transform: translate(-50%, 20px); opacity: 0; }
+  }
+  @keyframes convSpin {
+    to { transform: rotate(360deg); }
+  }
+  .convSpinner {
+    width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: convSpin 0.8s linear infinite;
+    display: inline-block;
+  }
+  .convProgress {
+    margin-top: 8px; width: 200px; height: 3px;
+    background: rgba(255,255,255,0.3);
+    border-radius: 2px; overflow: hidden;
+  }
+  .convProgressBar {
+    height: 100%; width: 0%;
+    background: white; border-radius: 2px;
+    transition: width 1s linear;
+  }
+
+  </style>
+
+<!-- HLS.js für Progressive Video Streaming -->
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
 </head>
 <body>
   <div class="box top">
@@ -1539,16 +1582,11 @@ fetch("/move", {
   });
 }
 
-// --- Lazy Video Conversion ---
+// ═══════════════════════════════════════════════════════════
+// VARIANTE C: PROGRESSIVE PLAYBACK MIT AUTO-UPGRADE
+// ═══════════════════════════════════════════════════════════
+
 function checkAndConvertVideo(videoRel, videoElement, linkElement) {
-  // Loading-Overlay erstellen
-  const overlay = document.getElementById("loadOverlay");
-  const loadMsg = document.getElementById("loadMsg");
-  
-  overlay.classList.add("active");
-  loadMsg.textContent = "Video wird geladen...";
-  
-  // Conversion-Check
   fetch("/videoconvert", {
     method: "POST",
     headers: {"Content-Type": "application/x-www-form-urlencoded"},
@@ -1557,66 +1595,211 @@ function checkAndConvertVideo(videoRel, videoElement, linkElement) {
   .then(r => r.json())
   .then(data => {
     if (data.status === "ready" || data.status === "not_needed") {
-      // Video ist bereit
-      overlay.classList.remove("active");
-      videoElement.src = data.url;
-      linkElement.href = data.url;
-      videoElement.load();
-      videoElement.play().catch(() => {});
+      // Video fertig - mit HLS abspielen
+      playWithHLS(videoRel, data.url, videoElement, linkElement);
     } else if (data.status === "converting") {
-      // Conversion läuft - Status pollen
-      loadMsg.textContent = "Video wird konvertiert (DivX → H.264)...";
-      pollConversionStatus(videoRel, videoElement, linkElement);
+      // Original versuchen (falls Browser kann)
+      const originalUrl = '/img?path=' + encodeURIComponent(videoRel);
+      videoElement.src = originalUrl;
+      linkElement.href = originalUrl;
+      videoElement.load();
+      videoElement.play().then(() => {
+        showConversionBanner("Video wird optimiert... 🔄", videoRel);
+      }).catch(() => {
+        showConversionLoading("Video wird konvertiert...", videoRel);
+      });
+      pollConversionStatusHLS(videoRel, videoElement, linkElement);
     } else {
-      overlay.classList.remove("active");
       alert("Fehler: " + (data.error || "Unbekannter Fehler"));
     }
   })
   .catch(err => {
-    overlay.classList.remove("active");
     alert("Fehler beim Laden: " + err);
   });
 }
 
-function pollConversionStatus(videoRel, videoElement, linkElement) {
-  const overlay = document.getElementById("loadOverlay");
-  const loadMsg = document.getElementById("loadMsg");
-  
+// HLS-Player initialisieren
+function playWithHLS(videoRel, hlsUrl, videoElement, linkElement) {
+  // Prüfen ob HLS-Playlist (.m3u8)
+  if (hlsUrl.includes('.m3u8') || hlsUrl.includes('/hls?')) {
+    if (Hls.isSupported()) {
+      // HLS.js verwenden
+      if (window.currentHls) {
+        window.currentHls.destroy();
+      }
+      
+      const hls = new Hls({
+        debug: false,
+        enableWorker: true,
+        lowLatencyMode: false,
+        backBufferLength: 90
+      });
+      
+      hls.loadSource(hlsUrl);
+      hls.attachMedia(videoElement);
+      
+      hls.on(Hls.Events.MANIFEST_PARSED, function() {
+        videoElement.play().catch(() => {});
+      });
+      
+      hls.on(Hls.Events.ERROR, function(event, data) {
+        if (data.fatal) {
+          console.error('HLS Fatal Error:', data);
+          // Fallback zu normalem Video
+          videoElement.src = '/img?path=' + encodeURIComponent(videoRel);
+          videoElement.load();
+          videoElement.play().catch(() => {});
+        }
+      });
+      
+      window.currentHls = hls;
+      linkElement.href = '/img?path=' + encodeURIComponent(videoRel);
+      
+    } else if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
+      // Native HLS (Safari)
+      videoElement.src = hlsUrl;
+      linkElement.href = hlsUrl;
+      videoElement.load();
+      videoElement.play().catch(() => {});
+    }
+  } else {
+    // Normales Video (MP4)
+    videoElement.src = hlsUrl;
+    linkElement.href = hlsUrl;
+    videoElement.load();
+    videoElement.play().catch(() => {});
+  }
+}
+
+// Polling mit HLS-Support
+function pollConversionStatusHLS(videoRel, videoElement, linkElement) {
   let pollCount = 0;
-  const maxPolls = 120; // 2 Minuten (120 * 1 Sekunde)
-  
+  const maxPolls = 300;
   const interval = setInterval(() => {
     pollCount++;
-    
     if (pollCount > maxPolls) {
       clearInterval(interval);
-      overlay.classList.remove("active");
-      alert("Timeout: Conversion dauert zu lange. Bitte versuche es später nochmal.");
+      hideConversionBanner();
+      hideConversionLoading();
+      showToast("⚠️ Conversion-Timeout. Video bleibt im Original-Format.", 5000);
       return;
     }
-    
     fetch("/videoconvert/status?path=" + encodeURIComponent(videoRel))
       .then(r => r.json())
       .then(data => {
         if (data.status === "ready") {
           clearInterval(interval);
-          overlay.classList.remove("active");
+          const wasPlaying = !videoElement.paused;
+          const currentTime = videoElement.currentTime;
           
-          // Video laden
-          videoElement.src = data.url;
-          linkElement.href = data.url;
-          videoElement.load();
-          videoElement.play().catch(() => {});
+          // HLS-Video laden
+          playWithHLS(videoRel, data.url, videoElement, linkElement);
+          
+          if (wasPlaying && currentTime > 0) {
+            videoElement.currentTime = currentTime;
+          }
+          
+          hideConversionBanner();
+          hideConversionLoading();
+          showToast("✅ Video optimiert!", 3000);
         } else {
-          // Noch am konvertieren - Countdown anzeigen
-          const remaining = Math.ceil((maxPolls - pollCount) / 2);
-          loadMsg.textContent = "Video wird konvertiert... (" + remaining + "s)";
+          updateConversionProgress(pollCount, maxPolls);
         }
       })
-      .catch(() => {
-        // Fehler beim Polling - weitermachen
-      });
-  }, 1000); // Alle 1 Sekunde prüfen
+      .catch(() => {});
+  }, 1000);
+}
+
+function pollConversionStatus(videoRel, videoElement, linkElement) {
+  let pollCount = 0;
+  const maxPolls = 300;
+  const interval = setInterval(() => {
+    pollCount++;
+    if (pollCount > maxPolls) {
+      clearInterval(interval);
+      hideConversionBanner();
+      hideConversionLoading();
+      showToast("⚠️ Conversion-Timeout. Video bleibt im Original-Format.", 5000);
+      return;
+    }
+    fetch("/videoconvert/status?path=" + encodeURIComponent(videoRel))
+      .then(r => r.json())
+      .then(data => {
+        if (data.status === "ready") {
+          clearInterval(interval);
+          const wasPlaying = !videoElement.paused;
+          const currentTime = videoElement.currentTime;
+          videoElement.src = data.url;
+          linkElement.href = data.url;
+          videoElement.currentTime = currentTime;
+          videoElement.load();
+          if (wasPlaying) {
+            videoElement.play().catch(() => {});
+          }
+          hideConversionBanner();
+          hideConversionLoading();
+          showToast("✅ Video optimiert!", 3000);
+        } else {
+          updateConversionProgress(pollCount, maxPolls);
+        }
+      })
+      .catch(() => {});
+  }, 1000);
+}
+
+function showConversionBanner(message, videoRel) {
+  hideConversionBanner();
+  const banner = document.createElement('div');
+  banner.id = 'conversionBanner';
+  banner.innerHTML = '<div style="display: flex; align-items: center; gap: 8px;"><div class="convSpinner"></div><span>' + message + '</span></div><div class="convProgress"><div class="convProgressBar" id="convProgressBar"></div></div>';
+  banner.style.cssText = 'position: fixed; top: 80px; left: 50%; transform: translateX(-50%); background: rgba(255, 140, 0, 0.95); color: white; padding: 12px 20px; border-radius: 24px; font-size: 13px; font-weight: 500; z-index: 10001; backdrop-filter: blur(8px); box-shadow: 0 4px 16px rgba(0,0,0,0.3); animation: slideDown 0.3s ease;';
+  document.body.appendChild(banner);
+}
+
+function hideConversionBanner() {
+  const banner = document.getElementById('conversionBanner');
+  if (banner) {
+    banner.style.animation = 'slideUp 0.3s ease';
+    setTimeout(() => banner.remove(), 300);
+  }
+}
+
+function showConversionLoading(message, videoRel) {
+  const overlay = document.getElementById("loadOverlay");
+  const loadMsg = document.getElementById("loadMsg");
+  overlay.classList.add("active");
+  loadMsg.innerHTML = message + '<div style="margin-top: 12px; font-size: 11px; opacity: 0.7;"><span id="convTimeRemaining">Geschätzte Zeit: ~60 Sek</span></div>';
+}
+
+function hideConversionLoading() {
+  const overlay = document.getElementById("loadOverlay");
+  overlay.classList.remove("active");
+}
+
+function updateConversionProgress(current, max) {
+  const progressBar = document.getElementById('convProgressBar');
+  if (progressBar) {
+    const percent = Math.min(100, (current / max) * 100);
+    progressBar.style.width = percent + '%';
+  }
+  const timeRemaining = document.getElementById('convTimeRemaining');
+  if (timeRemaining) {
+    const remaining = Math.ceil((max - current));
+    timeRemaining.textContent = 'Verbleibend: ~' + remaining + ' Sek';
+  }
+}
+
+function showToast(message, duration) {
+  duration = duration || 3000;
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = message;
+  toast.style.cssText = 'position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: rgba(0, 0, 0, 0.85); color: white; padding: 12px 24px; border-radius: 24px; font-size: 13px; font-weight: 500; z-index: 10002; backdrop-filter: blur(8px); animation: fadeInUp 0.3s ease;';
+  document.body.appendChild(toast);
+  setTimeout(() => {
+    toast.style.animation = 'fadeOutDown 0.3s ease';
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
 }
 
 function openWithVLC() {

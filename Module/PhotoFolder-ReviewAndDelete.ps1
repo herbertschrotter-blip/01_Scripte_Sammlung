@@ -554,7 +554,7 @@ if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
             $fs.Close()
             $res.OutputStream.Close()
           }
-        } else {
+} else {
           # Normal Request (kein Range)
           $res.StatusCode = 200
           $res.ContentType = $ct
@@ -569,7 +569,7 @@ if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
             $fs.Close()
             $res.OutputStream.Close()
           }
-        }
+        }        
         continue
       }
 
@@ -649,9 +649,8 @@ if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
           }
           
           # Prüfen ob Conversion nötig
-          $needsConv = Test-NeedsConversion -VideoPath $videoFull
-          $convertedPath = Get-ConvertedVideoPath -VideoPath $videoFull
-          
+$needsConv = Test-NeedsConversion -VideoPath $videoFull
+$convertedPath = Get-ConvertedHLSPath -VideoPath $videoFull  # ← HLS statt MP4          
           if (-not $needsConv) {
             # Kein Conversion nötig - Original verwenden
             $json = @{ 
@@ -663,12 +662,12 @@ if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
           }
           
           # Prüfen ob bereits konvertiert
-          if (Test-Path -LiteralPath $convertedPath) {
-            # Bereits vorhanden
-            $relConverted = Get-RelativePathSafe -Base $RootFull -Full $convertedPath
-            $json = @{ 
-              status = "ready"
-              url = "/img?path=$(UrlEncode($relConverted))"
+if (Test-Path -LiteralPath $convertedPath) {
+  # Bereits vorhanden - HLS-Playlist!
+  $relConverted = Get-RelativePathSafe -Base $RootFull -Full $convertedPath
+  $json = @{ 
+    status = "ready"
+    url = "/hls?path=$(UrlEncode($relConverted))"              
             } | ConvertTo-Json -Compress
             Send-ResponseText -Response $res -Text $json -ContentType "application/json"
             continue
@@ -722,13 +721,13 @@ if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
         
         try {
           $videoFull = Resolve-FullPathSafe -RootFull $RootFull -RelPath $rel
-          $convertedPath = Get-ConvertedVideoPath -VideoPath $videoFull
-          
-          if (Test-Path -LiteralPath $convertedPath) {
-            $relConverted = Get-RelativePathSafe -Base $RootFull -Full $convertedPath
-            $json = @{ 
-              status = "ready"
-              url = "/img?path=$(UrlEncode($relConverted))"
+          $convertedPath = Get-ConvertedHLSPath -VideoPath $videoFull  # ← HLS
+
+if (Test-Path -LiteralPath $convertedPath) {
+  $relConverted = Get-RelativePathSafe -Base $RootFull -Full $convertedPath
+  $json = @{ 
+    status = "ready"
+    url = "/hls?path=$(UrlEncode($relConverted))"              
             } | ConvertTo-Json -Compress
             Send-ResponseText -Response $res -Text $json -ContentType "application/json"
           } else {
@@ -741,6 +740,101 @@ if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
         }
         continue
       }
+
+# HLS Playlist ausliefern (.m3u8)
+if ($path -eq "/hls" -and $req.HttpMethod -eq "GET") {
+  $q = $req.QueryString["path"]
+  if ([string]::IsNullOrWhiteSpace($q)) {
+    Send-ResponseText -Response $res -Text "Missing path" -StatusCode 400
+    continue
+  }
+
+  $rel = UrlDecode($q)
+  try {
+    $full = Resolve-FullPathSafe -RootFull $RootFull -RelPath $rel
+  } catch {
+    Send-ResponseText -Response $res -Text "Forbidden" -StatusCode 403
+    continue
+  }
+
+  if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
+    Send-ResponseText -Response $res -Text "Playlist not found" -StatusCode 404
+    continue
+  }
+
+  # M3U8 Playlist laden und URLs umschreiben
+  $content = Get-Content -LiteralPath $full -Raw -Encoding UTF8
+  
+  # Chunk-Pfade zu /hlschunk URLs umschreiben
+  $dir = Split-Path -Parent $full
+  $lines = $content -split "`n"
+  $newLines = @()
+  
+  foreach ($line in $lines) {
+    if ($line -match '\.ts$') {
+      # .ts Chunk gefunden - zu absoluter URL machen
+      $chunkFile = $line.Trim()
+      $chunkFull = Join-Path $dir $chunkFile
+      $chunkRel = Get-RelativePathSafe -Base $RootFull -Full $chunkFull
+      $newLines += "/hlschunk?path=$(UrlEncode($chunkRel))"
+    } else {
+      $newLines += $line
+    }
+  }
+  
+  $modifiedContent = $newLines -join "`n"
+  
+  # Playlist ausliefern
+  $res.StatusCode = 200
+  $res.ContentType = "application/vnd.apple.mpegurl"
+  $res.AddHeader("Access-Control-Allow-Origin", "*")
+  
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes($modifiedContent)
+  $res.ContentLength64 = $bytes.Length
+  $res.OutputStream.Write($bytes, 0, $bytes.Length)
+  $res.OutputStream.Close()
+  continue
+}
+
+# HLS Video-Chunks ausliefern (.ts)
+if ($path -eq "/hlschunk" -and $req.HttpMethod -eq "GET") {
+  $q = $req.QueryString["path"]
+  if ([string]::IsNullOrWhiteSpace($q)) {
+    Send-ResponseText -Response $res -Text "Missing path" -StatusCode 400
+    continue
+  }
+
+  $rel = UrlDecode($q)
+  try {
+    $full = Resolve-FullPathSafe -RootFull $RootFull -RelPath $rel
+  } catch {
+    Send-ResponseText -Response $res -Text "Forbidden" -StatusCode 403
+    continue
+  }
+
+  if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
+    Send-ResponseText -Response $res -Text "Chunk not found" -StatusCode 404
+    continue
+  }
+
+  # TS-Chunk streamen
+  $res.StatusCode = 200
+  $res.ContentType = "video/mp2t"
+  $res.AddHeader("Access-Control-Allow-Origin", "*")
+  
+  $fi = [System.IO.FileInfo]::new($full)
+  $res.ContentLength64 = $fi.Length
+  
+  $fs = [System.IO.File]::Open($full, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+  try {
+    $fs.CopyTo($res.OutputStream)
+  }
+  finally {
+    $fs.Close()
+    $res.OutputStream.Close()
+  }
+  continue
+}
 
       if ($path -eq "/openvlc" -and $req.HttpMethod -eq "POST") {
         $body = Read-RequestBody -Request $req
