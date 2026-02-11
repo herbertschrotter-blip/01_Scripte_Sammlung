@@ -350,6 +350,25 @@ function Get-PhotoGalleryHTML {
   #viewerX:hover{background:var(--c-danger-hover);}
   #viewerX:active{transform:scale(.9);}
 
+#viewerFilename{
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.75);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  padding: 8px 20px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 500;
+  z-index: 10001;
+  max-width: 80vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
   #viewerDel{
     position:fixed;
     top:20px;
@@ -566,6 +585,9 @@ function Get-PhotoGalleryHTML {
 
   <div id="viewer" onclick="closeViewer()">
     <button id="viewerDel" type="button" onclick="event.stopPropagation(); viewerDelete()" title="Medium löschen">🗑️</button>
+   
+   <div id="viewerFilename"></div> 
+   
     <div id="viewerInner" onclick="event.stopPropagation()">
       <button id="viewerX" type="button" onclick="closeViewer()">X</button>
       <img id="viewerImg" src="" title="Links klicken = zurück | Rechts klicken = vorwärts" />
@@ -836,6 +858,10 @@ function openViewerWith(folderKey, urls, types, idx){
   const currentType = types[window.viewerState.idx];
 
   const v = document.getElementById("viewer");
+
+const filenameEl = document.getElementById("viewerFilename");
+filenameEl.textContent = getFilename(src);
+
   const viewerImg = document.getElementById("viewerImg");
   const viewerVideo = document.getElementById("viewerVideo");
   const a = document.getElementById("viewerOpen");
@@ -850,21 +876,20 @@ function openViewerWith(folderKey, urls, types, idx){
     const videoRel = urlToRel(getOriginalMediaSrc(src));
     checkAndConvertVideo(videoRel, viewerVideo, a);
     vlcBtn.style.display = 'inline-block';  // ← NEU: VLC-Button zeigen
-  } else {   
-    // Bild anzeigen
-    viewerVideo.style.display = 'none';
-    viewerVideo.pause();
-    viewerVideo.src = '';
-const cacheBust = "?v=" + Date.now();
-    const imgSrc = src.includes("?") ? src + "&v=" + Date.now() : src + cacheBust;
-    
-    viewerImg.style.display = 'block';
-    viewerImg.src = imgSrc;
-    a.href = src;
+} else {   
+  // Bild anzeigen
+  viewerVideo.style.display = 'none';
+  viewerVideo.pause();
+  viewerVideo.src = '';
+  const cacheBust = "?v=" + Date.now();
+  const imgSrc = src.includes("?") ? src + "&v=" + Date.now() : src + cacheBust;
+  
+  viewerImg.style.display = 'block';
+  viewerImg.src = imgSrc;
+  a.href = src;
 
-    vlcBtn.style.display = 'none';  // ← NEU: VLC-Button verstecken
-  }
-
+  vlcBtn.style.display = 'none';
+}
   v.style.display = "flex";
   preloadAround(urls, types, window.viewerState.idx, 5);
 }
@@ -897,18 +922,21 @@ function viewerPrev(){
   }
   
   st.idx = st.idx - 1;
-    
+
   const viewerImg = document.getElementById("viewerImg");
   const viewerVideo = document.getElementById("viewerVideo");
   const a = document.getElementById("viewerOpen");
   const currentType = st.types[st.idx];
 
 if (currentType === 'video') {
-    viewerImg.style.display = 'none';
-    viewerVideo.style.display = 'block';
-    
-    const videoRel = urlToRel(getOriginalMediaSrc(st.urls[st.idx]));
-    checkAndConvertVideo(videoRel, viewerVideo, a);
+  viewerImg.style.display = 'none';
+  viewerVideo.style.display = 'block';
+  
+  const videoRel = urlToRel(getOriginalMediaSrc(st.urls[st.idx]));
+  checkAndConvertVideo(videoRel, viewerVideo, a);
+  
+  const filenameEl = document.getElementById("viewerFilename");
+  filenameEl.textContent = getFilename(st.urls[st.idx]);   
   } else {
 
     viewerVideo.style.display = 'none';
@@ -943,12 +971,15 @@ function viewerNext(){
   const currentType = st.types[st.idx];
 
 if (currentType === 'video') {
-    viewerImg.style.display = 'none';
-    viewerVideo.style.display = 'block';
-    
-    const videoRel = urlToRel(getOriginalMediaSrc(st.urls[st.idx]));
-    checkAndConvertVideo(videoRel, viewerVideo, a);
-  } else {
+  viewerImg.style.display = 'none';
+  viewerVideo.style.display = 'block';
+  
+  const videoRel = urlToRel(getOriginalMediaSrc(st.urls[st.idx]));
+  checkAndConvertVideo(videoRel, viewerVideo, a);
+  
+  const filenameEl = document.getElementById("viewerFilename");
+  filenameEl.textContent = getFilename(st.urls[st.idx]);
+} else {
 
     viewerVideo.style.display = 'none';
     viewerVideo.pause();
@@ -958,7 +989,9 @@ const cacheBust = "?v=" + Date.now();
     
     viewerImg.style.display = 'block';
     viewerImg.src = imgSrc;
-    a.href = st.urls[st.idx];    
+    a.href = st.urls[st.idx];
+    const filenameEl = document.getElementById("viewerFilename");
+filenameEl.textContent = getFilename(st.urls[st.idx]);    
   }
   
   preloadAround(st.urls, st.types, st.idx, 3);
@@ -979,6 +1012,17 @@ function urlToRel(src){
     const u = new URL(src, location.origin);
     return u.searchParams.get("path") || "";
   } catch(e){ return ""; }
+}
+
+function getFilename(src) {
+  try {
+    const url = new URL(src, location.origin);
+    const path = url.searchParams.get("path") || "";
+    const parts = path.split(/[\\\/]/);
+    return parts[parts.length - 1] || "Unbekannt";
+  } catch(e) {
+    return "Unbekannt";
+  }
 }
 
 function viewerDelete(){
