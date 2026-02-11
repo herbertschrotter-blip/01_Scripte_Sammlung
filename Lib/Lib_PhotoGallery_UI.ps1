@@ -639,15 +639,34 @@ if (lastDeletedCard && lastDeletedIndex < allCards.length - 1) {
 } else if (lastDeletedIndex > 0) {
   // Kein Ordner danach → Nimm den davor
   nextCard = allCards[lastDeletedIndex - 1];
-} else {
-  // Fallback: Erster Ordner
-  nextCard = allCards[0];
 }
 
-if (nextCard) {
+// Nur Scroll-Anker setzen wenn ein gültiger nächster Ordner existiert
+// und dieser NICHT auch gelöscht wird
+if (nextCard && !allDeletedFolders.has(nextCard.dataset.path)) {
   sessionStorage.setItem('scrollAnchor', nextCard.dataset.path);
   console.log('Scroll-Anker gesetzt:', nextCard.dataset.path);
+} else {
+  // Alle Ordner werden gelöscht oder letzter Ordner → Kein Scroll
+  console.log('Kein gültiger Scroll-Anker (alle Ordner gelöscht oder letzter Ordner)');
+  sessionStorage.removeItem('scrollAnchor');
 }
+
+  // Intelligente Zählung: Ordner ODER enthaltene Bilder (nicht beides)
+  let deleteCount = folders.length;
+
+  // Zähle nur Bilder die NICHT in bereits markierten Ordnern sind
+  const folderPaths = new Set(folders.map(cb => cb.value));
+  imgs.forEach(cb => {
+    const wrap = cb.closest('.imgWrap');
+    if (wrap) {
+      const folderKey = wrap.dataset.folderKey;
+      // Nur zählen wenn der Ordner NICHT bereits markiert ist
+      if (!folderPaths.has(folderKey)) {
+        deleteCount++;
+      }
+    }
+  });
 
   let msg = "";
   if(folders.length > 0) msg += folders.length + " Ordner";
@@ -660,26 +679,8 @@ if (nextCard) {
   const overlay = document.getElementById("loadOverlay");
   const loadMsg = document.getElementById("loadMsg");
   overlay.classList.add("active");
-  
-  
-  
-// Intelligente Zählung: Ordner ODER enthaltene Bilder (nicht beides)
-let deleteCount = folders.length;
+  loadMsg.textContent = "Lösche " + deleteCount + " Element" + (deleteCount !== 1 ? "e" : "") + "…";
 
-// Zähle nur Bilder die NICHT in bereits markierten Ordnern sind
-const folderPaths = new Set(folders.map(cb => cb.value));
-imgs.forEach(cb => {
-  const wrap = cb.closest('.imgWrap');
-  if (wrap) {
-    const folderKey = wrap.dataset.folderKey;
-    // Nur zählen wenn der Ordner NICHT bereits markiert ist
-    if (!folderPaths.has(folderKey)) {
-      deleteCount++;
-    }
-  }
-});
-
-loadMsg.textContent = "Lösche " + deleteCount + " Element" + (deleteCount !== 1 ? "e" : "") + "…";
   const params = new URLSearchParams();
   params.append("confirm", "1");
   folders.forEach(cb => params.append("folder", cb.value));
@@ -698,17 +699,20 @@ fetch("/delete", {
     console.log("Delete Response Data:", data);
     overlay.classList.remove("active");
     
-    // Selektives Cache-Clearing: Nur gelöschte Items
+    // ========== SELEKTIVES CACHE-CLEARING: NUR GELÖSCHTE ITEMS ==========
     if ('caches' in window && data.deletedImages) {
       caches.open('photofolder-v1').then(cache => {
+        // Gelöschte Bilder aus Cache entfernen
         data.deletedImages.forEach(imgPath => {
           const thumbUrl = '/img?path=' + encodeURIComponent(imgPath);
           const videoThumbUrl = '/videothumb?path=' + encodeURIComponent(imgPath);
-          cache.delete(thumbUrl);
-          cache.delete(videoThumbUrl);
+          cache.delete(thumbUrl).then(() => console.log('Cache gelöscht:', thumbUrl));
+          cache.delete(videoThumbUrl).then(() => console.log('Cache gelöscht:', videoThumbUrl));
         });
+        console.log('Selektives Cache-Clearing: ' + data.deletedImages.length + ' Items entfernt');
       });
     }
+    // ========== ENDE SELEKTIVES CACHE-CLEARING ==========
     
     // DOM-Update statt Reload
     updateDOMAfterDelete(data.deletedFolders, data.deletedImages);
@@ -722,6 +726,7 @@ fetch("/delete", {
     overlay.classList.remove("active");
     
     if(confirm("Fehler beim Löschen: " + err + "\n\nSeite trotzdem neu laden?")) {
+      // Bei Fehler: Kompletter Cache-Clear + Reload
       if ('caches' in window) {
         caches.keys().then(names => {
           names.forEach(name => caches.delete(name));
@@ -1291,6 +1296,67 @@ function initPreviews(){
 
 document.addEventListener("DOMContentLoaded", initPreviews);
 
+// ========== CACHE-CLEAR BEI BROWSER-RELOAD (F5, Reload-Button) ==========
+window.addEventListener('beforeunload', function() {
+  // Cache leeren wenn Seite neu geladen wird
+  if ('caches' in window) {
+    caches.keys().then(names => {
+      names.forEach(name => {
+        caches.delete(name);
+        console.log('Cache gelöscht bei Reload:', name);
+      });
+    });
+  }
+});
+// ========== ENDE CACHE-CLEAR BEI RELOAD ==========
+
+// Scroll-Position nach Reload wiederherstellen
+window.addEventListener('load', function() {
+  const savedAnchor = sessionStorage.getItem('scrollAnchor');
+  
+  if (savedAnchor) {
+    console.log('Scroll-Anker gefunden:', savedAnchor);
+    
+    // Warte bis DOM vollständig geladen
+    setTimeout(function() {
+      const card = document.querySelector('.card[data-path="' + savedAnchor + '"]');
+      
+      if (card) {
+        console.log('Scrolle zu:', savedAnchor);
+        
+        // Scrolle zur Card
+        card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        
+        // ========== NEU: Korrigiere Position um Toolbar-Höhe ==========
+        setTimeout(function() {
+          window.scrollBy({ top: -100, behavior: 'smooth' });
+        }, 100);
+        // ========== ENDE TOOLBAR-KORREKTUR ==========
+        
+        // Optional: Highlight-Effekt (kurz aufblinken)
+        card.style.transition = 'background 0.3s ease';
+        card.style.background = '#e0f2fe';
+        setTimeout(function() {
+          card.style.background = '';
+        }, 1000);
+      } else {
+        console.log('Ordner nicht gefunden:', savedAnchor);
+        // Ordner existiert nicht mehr - scrolle zum ersten
+        const firstCard = document.querySelector('.card');
+        if (firstCard) {
+          firstCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          setTimeout(function() {
+            window.scrollBy({ top: -100, behavior: 'smooth' });
+          }, 100);
+        }
+      }
+      
+      sessionStorage.removeItem('scrollAnchor');
+    }, 200); // Kurze Verzögerung für DOM-Rendering
+  }
+});
+
+
 // Scroll-Position nach Reload wiederherstellen
 window.addEventListener('load', function() {
   const savedAnchor = sessionStorage.getItem('scrollAnchor');
@@ -1383,12 +1449,16 @@ function changeRoot(){
     .then(data => {
       if(data.cancelled) return;
       
-      // Cache leeren
+      // ========== KOMPLETTER CACHE-CLEAR BEI ORDNER-WECHSEL ==========
       if ('caches' in window) {
         caches.keys().then(names => {
-          names.forEach(name => caches.delete(name));
+          names.forEach(name => {
+            caches.delete(name);
+            console.log('Cache komplett gelöscht:', name);
+          });
         });
       }
+      // ========== ENDE KOMPLETTER CACHE-CLEAR ==========
       
       // Hard Reload mit Timestamp
       window.location.href = window.location.pathname + "?t=" + Date.now();
@@ -1660,7 +1730,16 @@ function scrollToNextFolder() {
     setTimeout(function() {
       const card = document.querySelector('.card[data-path="' + savedAnchor + '"]');
       if (card) {
+        // Scrolle zur Card
         card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        
+        // ========== NEU: Korrigiere Position um Toolbar-Höhe ==========
+        setTimeout(function() {
+          window.scrollBy({ top: -100, behavior: 'smooth' });
+        }, 100);
+        // ========== ENDE TOOLBAR-KORREKTUR ==========
+        
+        // Highlight-Effekt
         card.style.transition = 'background 0.3s ease';
         card.style.background = '#e0f2fe';
         setTimeout(function() {
@@ -1671,8 +1750,7 @@ function scrollToNextFolder() {
     }, 100);
   }
 }
-
-
+  
 </script>
 </body>
 </html>
