@@ -599,6 +599,19 @@ function submitDelete(){
     return;
   }
 
+// Scroll-Position speichern
+  sessionStorage.setItem('scrollPosition', window.scrollY);
+  
+  // Ersten sichtbaren Ordner-Pfad speichern (als Backup)
+  const cards = Array.from(document.querySelectorAll('.card'));
+  const visibleCard = cards.find(card => {
+    const rect = card.getBoundingClientRect();
+    return rect.top >= 0 && rect.top <= window.innerHeight;
+  });
+  if (visibleCard) {
+    sessionStorage.setItem('scrollAnchor', visibleCard.dataset.path);
+  }
+
   let msg = "";
   if(folders.length > 0) msg += folders.length + " Ordner";
   if(folders.length > 0 && imgs.length > 0) msg += " und ";
@@ -847,6 +860,9 @@ function viewerDelete(){
   const src = st.urls[st.idx];
   const rel = urlToRel(isVideo(src) ? getOriginalMediaSrc(src) : src);
   if(!rel) return;
+
+// Scroll-Position speichern (KEIN Reload, nur für Konsistenz)
+  sessionStorage.setItem('scrollPosition', window.scrollY);
 
   const params = new URLSearchParams();
   params.append("confirm", "1");
@@ -1202,6 +1218,27 @@ function initPreviews(){
 
 document.addEventListener("DOMContentLoaded", initPreviews);
 
+// Scroll-Position nach Reload wiederherstellen
+window.addEventListener('load', function() {
+  // Variante 1: Exakte Pixel-Position
+  const savedScroll = sessionStorage.getItem('scrollPosition');
+  if (savedScroll) {
+    window.scrollTo(0, parseInt(savedScroll, 10));
+    sessionStorage.removeItem('scrollPosition');
+    return;
+  }
+  
+  // Variante 2: Zum gespeicherten Ordner scrollen
+  const savedAnchor = sessionStorage.getItem('scrollAnchor');
+  if (savedAnchor) {
+    const card = document.querySelector('.card[data-path="' + savedAnchor + '"]');
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    sessionStorage.removeItem('scrollAnchor');
+  }
+});
+
 function toggleFolder(btn){
   const card = btn.closest(".card");
   const thumbs = card.querySelector(".thumbs");
@@ -1281,6 +1318,17 @@ function submitMove(){
   if(folders.length === 0 && imgs.length === 0){
     alert("Nichts ausgewählt.");
     return;
+  }
+
+  // Scroll-Position speichern
+  sessionStorage.setItem('scrollPosition', window.scrollY);
+  const cards = Array.from(document.querySelectorAll('.card'));
+  const visibleCard = cards.find(card => {
+    const rect = card.getBoundingClientRect();
+    return rect.top >= 0 && rect.top <= window.innerHeight;
+  });
+  if (visibleCard) {
+    sessionStorage.setItem('scrollAnchor', visibleCard.dataset.path);
   }
 
   const overlay = document.getElementById("loadOverlay");
