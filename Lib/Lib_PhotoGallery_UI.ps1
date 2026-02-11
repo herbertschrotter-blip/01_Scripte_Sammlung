@@ -548,6 +548,7 @@ function Get-PhotoGalleryHTML {
       <div class="hint"><b>Löschmodus:</b> $hardInfo</div>
     </div>
     <button class="neutral" type="button" onclick="changeRoot()" title="Anderen Root-Ordner wählen">📂 Ordner wählen</button>
+    <button class="neutral" type="button" onclick="flattenAndMove()" title="Root vereinfachen & verschieben">📦 Flatten & Move</button>
 
     <div style="flex:1"></div>
 
@@ -1538,6 +1539,39 @@ function changeRoot(){
       window.location.href = window.location.pathname + "?t=" + Date.now();
     })
     .catch(e => alert("Fehler: " + e));
+}
+
+function flattenAndMove(){
+  // Keine Bestätigung - läuft direkt in PowerShell Console
+  fetch("/flattenandmove", { method:"POST" })  
+    .then(r => r.json())
+    .then(data => {
+      if(data.cancelled) {
+        alert("Abgebrochen.");
+        return;
+      }
+      if(data.error) {
+        alert("Fehler: " + data.error);
+        return;
+      }
+      
+      alert("✅ Flatten & Move abgeschlossen!\n\nVerschoben: " + data.movedCount + "\nÜbersprungen: " + data.skippedCount);
+      
+      // Cache leeren
+      if ('caches' in window) {
+        caches.keys().then(names => {
+          names.forEach(name => caches.delete(name));
+        });
+      }
+      
+      // Server beenden (da Root gelöscht wurde wenn User "J" gewählt hat)
+      fetch("/shutdown", { method:"POST" })
+        .then(() => window.close())
+        .catch(() => window.close());
+    })
+    .catch(err => {
+      alert("Fehler: " + err);
+    });
 }
 
 function openRecycleBin(){
