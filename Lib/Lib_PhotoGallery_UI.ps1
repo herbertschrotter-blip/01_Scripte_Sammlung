@@ -1151,9 +1151,9 @@ function createImgWrap(src, rel, type, folderKey, idx, isPreview){
   const cacheBust = "?v=" + Date.now();
   const imgSrc = src.includes("?") ? src + "&v=" + Date.now() : src + cacheBust;
   
-  const img = document.createElement("img");
+const img = document.createElement("img");
   img.className = "t";
-  img.loading = "lazy";
+  img.loading = "eager";  // Sofort laden für schnellere Anzeige
   img.src = imgSrc;
 
   // ========== GEÄNDERT: Click-Delay für Doppelklick-Erkennung ==========
@@ -1355,44 +1355,6 @@ window.addEventListener('load', function() {
           setTimeout(function() {
             window.scrollBy({ top: -100, behavior: 'smooth' });
           }, 100);
-        }
-      }
-      
-      sessionStorage.removeItem('scrollAnchor');
-    }, 200); // Kurze Verzögerung für DOM-Rendering
-  }
-});
-
-
-// Scroll-Position nach Reload wiederherstellen
-window.addEventListener('load', function() {
-  const savedAnchor = sessionStorage.getItem('scrollAnchor');
-  
-  if (savedAnchor) {
-    console.log('Scroll-Anker gefunden:', savedAnchor);
-    
-    // Warte bis DOM vollständig geladen
-    setTimeout(function() {
-      const card = document.querySelector('.card[data-path="' + savedAnchor + '"]');
-      
-      if (card) {
-        console.log('Scrolle zu:', savedAnchor);
-        
-        // Scrolle so dass der Ordner oben sichtbar ist (mit kleinem Abstand)
-        card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        
-        // Optional: Highlight-Effekt (kurz aufblinken)
-        card.style.transition = 'background 0.3s ease';
-        card.style.background = '#e0f2fe';
-        setTimeout(function() {
-          card.style.background = '';
-        }, 1000);
-      } else {
-        console.log('Ordner nicht gefunden:', savedAnchor);
-        // Ordner existiert nicht mehr - scrolle zum ersten
-        const firstCard = document.querySelector('.card');
-        if (firstCard) {
-          firstCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
       }
       
