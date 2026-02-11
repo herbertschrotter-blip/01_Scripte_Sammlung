@@ -18,6 +18,58 @@ Zweck:
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# --- NATÜRLICHE SORTIERUNG ---
+function ConvertTo-NaturalSortKey {
+    param([string]$Text)
+    
+    # Zerlege Text in Zahlen und Nicht-Zahlen
+    $parts = [regex]::Split($Text, '(\d+)')
+    
+    $result = New-Object System.Collections.ArrayList
+    
+    foreach ($part in $parts) {
+        if ($part -match '^\d+$') {
+            # Zahl: als Integer speichern (mit führenden Nullen zum Vergleich)
+            $num = [int]$part
+            [void]$result.Add($num.ToString("D20"))  # 20 Stellen mit Nullen auffüllen
+        } else {
+            # Text: normal anhängen
+            [void]$result.Add($part.ToLower())
+        }
+    }
+    
+    return $result -join ''
+}
+
+function Sort-Natural {
+    param(
+        [Parameter(ValueFromPipeline)]
+        [object[]]$InputObject,
+        
+        [string]$Property
+    )
+    
+    begin {
+        $items = @()
+    }
+    
+    process {
+        $items += $InputObject
+    }
+    
+    end {
+        if ($Property) {
+            $items | Sort-Object -Property @{
+                Expression = { ConvertTo-NaturalSortKey -Text $_.$Property }
+            }
+        } else {
+            $items | Sort-Object -Property @{
+                Expression = { ConvertTo-NaturalSortKey -Text $_ }
+            }
+        }
+    }
+}
+
 # Cache-Verzeichnis (im User-Temp)
 $script:CacheDir = Join-Path $env:TEMP "PhotoFolder_Cache"
 
@@ -273,13 +325,7 @@ function Scan-ImageFolders {
     }
   }
 
-  Write-Verbose "Scan abgeschlossen: $scannedCount neu gescannt, $cachedCount aus Cache"
-
-  # Sortierung (Natural Sort)
-  $sorted = $result | Sort-Object { 
-    $parts = Get-NaturalSortKey -Text $_.RelPath
-    return $parts
-  }
+Write-Verbose "Scan abgeschlossen: $scannedCount neu gescannt, $cachedCount aus Cache"
 
   # Cache speichern (wenn aktiviert)
   if ($UseCache) {
@@ -293,8 +339,10 @@ function Scan-ImageFolders {
     Write-Verbose "Cache gespeichert: $($cacheData.Count) Ordner"
   }
 
-  return $sorted
+  # Natürlich sortiert zurückgeben
+  return $result | Sort-Natural -Property RelPath
 }
+
 
 # ------------------------------------------------------------
 # Cache löschen
