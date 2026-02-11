@@ -599,18 +599,54 @@ function submitDelete(){
     return;
   }
 
-// Scroll-Position speichern
-  sessionStorage.setItem('scrollPosition', window.scrollY);
-  
-  // Ersten sichtbaren Ordner-Pfad speichern (als Backup)
-  const cards = Array.from(document.querySelectorAll('.card'));
-  const visibleCard = cards.find(card => {
-    const rect = card.getBoundingClientRect();
-    return rect.top >= 0 && rect.top <= window.innerHeight;
-  });
-  if (visibleCard) {
-    sessionStorage.setItem('scrollAnchor', visibleCard.dataset.path);
+// Intelligenter Scroll-Anker: Nächster Ordner nach dem letzten gelöschten
+const allCards = Array.from(document.querySelectorAll('.card'));
+const selectedFolders = folders.map(cb => cb.value); // Pfade der zu löschenden Ordner
+const selectedImgFolders = new Set();
+
+// Finde Ordner die Bilder enthalten die gelöscht werden
+imgs.forEach(cb => {
+  const wrap = cb.closest('.imgWrap');
+  if (wrap) {
+    const folderKey = wrap.dataset.folderKey;
+    if (folderKey) selectedImgFolders.add(folderKey);
   }
+});
+
+// Alle zu löschenden Ordner kombinieren
+const allDeletedFolders = new Set([...selectedFolders, ...selectedImgFolders]);
+
+// Finde den LETZTEN (untersten) zu löschenden Ordner
+let lastDeletedCard = null;
+let lastDeletedIndex = -1;
+
+allCards.forEach((card, index) => {
+  const path = card.dataset.path;
+  if (allDeletedFolders.has(path)) {
+    if (index > lastDeletedIndex) {
+      lastDeletedIndex = index;
+      lastDeletedCard = card;
+    }
+  }
+});
+
+// Finde den NÄCHSTEN Ordner nach dem letzten gelöschten
+let nextCard = null;
+if (lastDeletedCard && lastDeletedIndex < allCards.length - 1) {
+  // Es gibt einen Ordner danach
+  nextCard = allCards[lastDeletedIndex + 1];
+} else if (lastDeletedIndex > 0) {
+  // Kein Ordner danach → Nimm den davor
+  nextCard = allCards[lastDeletedIndex - 1];
+} else {
+  // Fallback: Erster Ordner
+  nextCard = allCards[0];
+}
+
+if (nextCard) {
+  sessionStorage.setItem('scrollAnchor', nextCard.dataset.path);
+  console.log('Scroll-Anker gesetzt:', nextCard.dataset.path);
+}
 
   let msg = "";
   if(folders.length > 0) msg += folders.length + " Ordner";
@@ -1220,22 +1256,38 @@ document.addEventListener("DOMContentLoaded", initPreviews);
 
 // Scroll-Position nach Reload wiederherstellen
 window.addEventListener('load', function() {
-  // Variante 1: Exakte Pixel-Position
-  const savedScroll = sessionStorage.getItem('scrollPosition');
-  if (savedScroll) {
-    window.scrollTo(0, parseInt(savedScroll, 10));
-    sessionStorage.removeItem('scrollPosition');
-    return;
-  }
-  
-  // Variante 2: Zum gespeicherten Ordner scrollen
   const savedAnchor = sessionStorage.getItem('scrollAnchor');
+  
   if (savedAnchor) {
-    const card = document.querySelector('.card[data-path="' + savedAnchor + '"]');
-    if (card) {
-      card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-    sessionStorage.removeItem('scrollAnchor');
+    console.log('Scroll-Anker gefunden:', savedAnchor);
+    
+    // Warte bis DOM vollständig geladen
+    setTimeout(function() {
+      const card = document.querySelector('.card[data-path="' + savedAnchor + '"]');
+      
+      if (card) {
+        console.log('Scrolle zu:', savedAnchor);
+        
+        // Scrolle so dass der Ordner oben sichtbar ist (mit kleinem Abstand)
+        card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        
+        // Optional: Highlight-Effekt (kurz aufblinken)
+        card.style.transition = 'background 0.3s ease';
+        card.style.background = '#e0f2fe';
+        setTimeout(function() {
+          card.style.background = '';
+        }, 1000);
+      } else {
+        console.log('Ordner nicht gefunden:', savedAnchor);
+        // Ordner existiert nicht mehr - scrolle zum ersten
+        const firstCard = document.querySelector('.card');
+        if (firstCard) {
+          firstCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
+      
+      sessionStorage.removeItem('scrollAnchor');
+    }, 200); // Kurze Verzögerung für DOM-Rendering
   }
 });
 
@@ -1320,17 +1372,47 @@ function submitMove(){
     return;
   }
 
-  // Scroll-Position speichern
-  sessionStorage.setItem('scrollPosition', window.scrollY);
-  const cards = Array.from(document.querySelectorAll('.card'));
-  const visibleCard = cards.find(card => {
-    const rect = card.getBoundingClientRect();
-    return rect.top >= 0 && rect.top <= window.innerHeight;
+// Intelligenter Scroll-Anker: Nächster Ordner nach dem letzten verschobenen
+  const allCards = Array.from(document.querySelectorAll('.card'));
+  const selectedFolders = folders.map(cb => cb.value);
+  const selectedImgFolders = new Set();
+
+  imgs.forEach(cb => {
+    const wrap = cb.closest('.imgWrap');
+    if (wrap) {
+      const folderKey = wrap.dataset.folderKey;
+      if (folderKey) selectedImgFolders.add(folderKey);
+    }
   });
-  if (visibleCard) {
-    sessionStorage.setItem('scrollAnchor', visibleCard.dataset.path);
+
+  const allMovedFolders = new Set([...selectedFolders, ...selectedImgFolders]);
+
+  let lastMovedCard = null;
+  let lastMovedIndex = -1;
+
+  allCards.forEach((card, index) => {
+    const path = card.dataset.path;
+    if (allMovedFolders.has(path)) {
+      if (index > lastMovedIndex) {
+        lastMovedIndex = index;
+        lastMovedCard = card;
+      }
+    }
+  });
+
+  let nextCard = null;
+  if (lastMovedCard && lastMovedIndex < allCards.length - 1) {
+    nextCard = allCards[lastMovedIndex + 1];
+  } else if (lastMovedIndex > 0) {
+    nextCard = allCards[lastMovedIndex - 1];
+  } else {
+    nextCard = allCards[0];
   }
 
+  if (nextCard) {
+    sessionStorage.setItem('scrollAnchor', nextCard.dataset.path);
+    console.log('Move: Scroll-Anker gesetzt:', nextCard.dataset.path);
+  }
   const overlay = document.getElementById("loadOverlay");
   const loadMsg = document.getElementById("loadMsg");
   overlay.classList.add("active");
