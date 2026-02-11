@@ -321,8 +321,8 @@ function Get-PhotoGalleryHTML {
   max-height:98vh;
   width: auto;
   height: auto;
-  min-width: 1920px;
-  min-height: 1080px;
+  min-width: 1280px;
+  min-height: 720px;
   border-radius:var(--radius);
   display:none;
   object-fit: contain;
@@ -890,8 +890,14 @@ function preloadOne(src){
 function viewerPrev(){
   const st = window.viewerState;
   if (!st.urls.length) return;
-  st.idx = (st.idx - 1 + st.urls.length) % st.urls.length;
   
+  // Beim ersten Bild -> Nicht weiter zurück (stoppen)
+  if (st.idx === 0) {
+    return;
+  }
+  
+  st.idx = st.idx - 1;
+    
   const viewerImg = document.getElementById("viewerImg");
   const viewerVideo = document.getElementById("viewerVideo");
   const a = document.getElementById("viewerOpen");
@@ -922,8 +928,15 @@ const cacheBust = "?v=" + Date.now();
 function viewerNext(){
   const st = window.viewerState;
   if (!st.urls.length) return;
-  st.idx = (st.idx + 1) % st.urls.length;
   
+  // Beim letzten Bild -> Viewer schließen
+  if (st.idx === st.urls.length - 1) {
+    closeViewer();
+    return;
+  }
+  
+  st.idx = st.idx + 1;
+
   const viewerImg = document.getElementById("viewerImg");
   const viewerVideo = document.getElementById("viewerVideo");
   const a = document.getElementById("viewerOpen");
