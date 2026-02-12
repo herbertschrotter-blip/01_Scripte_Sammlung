@@ -347,9 +347,9 @@ function Get-MediaFiles {
             }
         }
         
-        Write-Verbose "Gefundene Media-Dateien: $($mediaFiles.Count) ($($mediaFiles | Where-Object Type -eq 'Image' | Measure-Object | Select-Object -ExpandProperty Count) Bilder, $($mediaFiles | Where-Object Type -eq 'Video' | Measure-Object | Select-Object -ExpandProperty Count) Videos)"
+        Write-Verbose "Gefundene Media-Dateien: $(@($mediaFiles).Count) ($(@($mediaFiles | Where-Object Type -eq 'Image')).Count Bilder, $(@($mediaFiles | Where-Object Type -eq 'Video')).Count Videos)"
         
-        return $mediaFiles
+        return @($mediaFiles)  # Erzwingt Array (auch bei 1 Element)
     }
     catch {
         Write-Error "Fehler beim Scannen von Media-Dateien in '$FolderPath': $_"
@@ -408,9 +408,9 @@ function Get-FolderStatistics {
         
         $stats = [PSCustomObject]@{
             FolderPath = $FolderPath
-            ImageCount = $images.Count
-            VideoCount = $videos.Count
-            TotalFiles = $mediaFiles.Count
+            ImageCount = @($images).Count
+            VideoCount = @($videos).Count
+            TotalFiles = @($mediaFiles).Count            
             TotalSize  = ($mediaFiles | Measure-Object -Property Size -Sum).Sum
         }
         
