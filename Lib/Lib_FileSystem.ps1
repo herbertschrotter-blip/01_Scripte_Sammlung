@@ -10,6 +10,7 @@
     - Natürliche Sortierung von Ordnernamen
     - Filterung nach Dateiendungen (Bilder, Videos)
     - Cache-Management für Ordner-Strukturen
+    - Relative Pfad-Berechnung
     
     Optimiert für große Foto-/Video-Sammlungen mit natürlicher Sortierung.
 
@@ -25,7 +26,7 @@
 
 .NOTES
     Autor: Herbert Schrotter
-    Version: 1.0.0
+    Version: 1.0.1
     
 .LINK
     https://github.com/herbertschrotter-blip/01_Scripte_Sammlung
@@ -44,6 +45,91 @@ $script:ImageExtensions = @('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.
 
 # Unterstützte Videoformate
 $script:VideoExtensions = @('.mp4', '.avi', '.mov', '.wmv', '.mkv', '.webm', '.m4v', '.mpg', '.mpeg')
+
+# ============================================================================
+# RELATIVE PFAD-BERECHNUNG
+# ============================================================================
+
+function Get-RelativePathSafe {
+    <#
+    .SYNOPSIS
+        Berechnet relativen Pfad mit Fehlerbehandlung
+    
+    .DESCRIPTION
+        Berechnet den relativen Pfad von RootPath zu TargetPath.
+        Bei Fehler (z.B. unterschiedliche Laufwerke) wird der vollständige TargetPath zurückgegeben.
+        
+        Fallback-Verhalten verhindert Fehler bei komplexen Pfad-Strukturen.
+    
+    .PARAMETER RootPath
+        Basis-Pfad (z.B. "C:\Photos")
+    
+    .PARAMETER TargetPath
+        Ziel-Pfad (z.B. "C:\Photos\Vacation\2024")
+    
+    .EXAMPLE
+        Get-RelativePathSafe -RootPath "C:\Photos" -TargetPath "C:\Photos\Vacation"
+        
+        Gibt zurück: "Vacation"
+    
+    .EXAMPLE
+        Get-RelativePathSafe -RootPath "C:\Photos" -TargetPath "D:\Backup"
+        
+        Gibt zurück: "D:\Backup" (unterschiedliche Laufwerke)
+    
+    .OUTPUTS
+        System.String
+        
+        Relativer Pfad oder vollständiger Pfad bei Fehler
+    
+    .NOTES
+        Verwendet [System.IO.Path]::GetRelativePath() in PS 6+
+        Fallback für PS 5.1
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [string]$RootPath,
+        
+        [Parameter(Mandatory)]
+        [string]$TargetPath
+    )
+    
+    try {
+        # Normalisiere Pfade (Trailing Backslash entfernen)
+        $RootPath = $RootPath.TrimEnd('\')
+        $TargetPath = $TargetPath.TrimEnd('\')
+        
+        # PowerShell 6+ hat GetRelativePath()
+        if ($PSVersionTable.PSVersion.Major -ge 6) {
+            $relativePath = [System.IO.Path]::GetRelativePath($RootPath, $TargetPath)
+        }
+        else {
+            # PowerShell 5.1 Fallback: Manuelle Berechnung
+            if ($TargetPath.StartsWith($RootPath, [StringComparison]::OrdinalIgnoreCase)) {
+                $relativePath = $TargetPath.Substring($RootPath.Length).TrimStart('\')
+            }
+            else {
+                # Unterschiedliche Laufwerke oder nicht verwandt
+                $relativePath = $TargetPath
+            }
+        }
+        
+        # Leerer String wenn identisch
+        if ([string]::IsNullOrEmpty($relativePath)) {
+            $relativePath = '.'
+        }
+        
+        Write-Verbose "Relativer Pfad berechnet: '$RootPath' -> '$TargetPath' = '$relativePath'"
+        return $relativePath
+    }
+    catch {
+        # Fehlerfall: Vollständigen Pfad zurückgeben
+        Write-Verbose "Fehler bei relativer Pfad-Berechnung, verwende vollständigen Pfad: $_"
+        return $TargetPath
+    }
+}
 
 # ============================================================================
 # ORDNER SCANNEN (REKURSIV)
