@@ -56,78 +56,56 @@ function Get-RelativePathSafe {
         Berechnet relativen Pfad mit Fehlerbehandlung
     
     .DESCRIPTION
-        Berechnet den relativen Pfad von RootPath zu TargetPath.
-        Bei Fehler (z.B. unterschiedliche Laufwerke) wird der vollständige TargetPath zurückgegeben.
-        
-        Fallback-Verhalten verhindert Fehler bei komplexen Pfad-Strukturen.
+        Berechnet den relativen Pfad von Base zu Target.
+        Bei Fehler (z.B. unterschiedliche Laufwerke) wird der vollständige Target-Pfad zurückgegeben.
     
-    .PARAMETER RootPath
+    .PARAMETER Base
         Basis-Pfad (z.B. "C:\Photos")
     
-    .PARAMETER TargetPath
+    .PARAMETER Target
         Ziel-Pfad (z.B. "C:\Photos\Vacation\2024")
     
     .EXAMPLE
-        Get-RelativePathSafe -RootPath "C:\Photos" -TargetPath "C:\Photos\Vacation"
+        Get-RelativePathSafe -Base "C:\Photos" -Target "C:\Photos\Vacation"
         
         Gibt zurück: "Vacation"
-    
-    .EXAMPLE
-        Get-RelativePathSafe -RootPath "C:\Photos" -TargetPath "D:\Backup"
-        
-        Gibt zurück: "D:\Backup" (unterschiedliche Laufwerke)
-    
-    .OUTPUTS
-        System.String
-        
-        Relativer Pfad oder vollständiger Pfad bei Fehler
-    
-    .NOTES
-        Verwendet [System.IO.Path]::GetRelativePath() in PS 6+
-        Fallback für PS 5.1
     #>
     [CmdletBinding()]
     [OutputType([string])]
     param(
         [Parameter(Mandatory)]
-        [string]$RootPath,
+        [string]$Base,
         
         [Parameter(Mandatory)]
-        [string]$TargetPath
+        [string]$Target
     )
     
     try {
-        # Normalisiere Pfade (Trailing Backslash entfernen)
-        $RootPath = $RootPath.TrimEnd('\')
-        $TargetPath = $TargetPath.TrimEnd('\')
+        $Base = $Base.TrimEnd('\')
+        $Target = $Target.TrimEnd('\')
         
-        # PowerShell 6+ hat GetRelativePath()
         if ($PSVersionTable.PSVersion.Major -ge 6) {
-            $relativePath = [System.IO.Path]::GetRelativePath($RootPath, $TargetPath)
+            $relativePath = [System.IO.Path]::GetRelativePath($Base, $Target)
         }
         else {
-            # PowerShell 5.1 Fallback: Manuelle Berechnung
-            if ($TargetPath.StartsWith($RootPath, [StringComparison]::OrdinalIgnoreCase)) {
-                $relativePath = $TargetPath.Substring($RootPath.Length).TrimStart('\')
+            if ($Target.StartsWith($Base, [StringComparison]::OrdinalIgnoreCase)) {
+                $relativePath = $Target.Substring($Base.Length).TrimStart('\')
             }
             else {
-                # Unterschiedliche Laufwerke oder nicht verwandt
-                $relativePath = $TargetPath
+                $relativePath = $Target
             }
         }
         
-        # Leerer String wenn identisch
         if ([string]::IsNullOrEmpty($relativePath)) {
             $relativePath = '.'
         }
         
-        Write-Verbose "Relativer Pfad berechnet: '$RootPath' -> '$TargetPath' = '$relativePath'"
+        Write-Verbose "Relativer Pfad: '$Base' -> '$Target' = '$relativePath'"
         return $relativePath
     }
     catch {
-        # Fehlerfall: Vollständigen Pfad zurückgeben
-        Write-Verbose "Fehler bei relativer Pfad-Berechnung, verwende vollständigen Pfad: $_"
-        return $TargetPath
+        Write-Verbose "Fehler bei Pfad-Berechnung, verwende vollständigen Pfad: $_"
+        return $Target
     }
 }
 
