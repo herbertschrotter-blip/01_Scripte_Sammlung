@@ -83,8 +83,8 @@ function Write-Err {
 # Root per Dialog (wenn nicht übergeben)
 # -----------------------------
 if ([string]::IsNullOrWhiteSpace($RootPath)) {
-  $RootPath = Show-FolderDialog -Description "Root-Ordner auswählen" -ShowNewFolderButton $false -TopMost $true
-  
+  $RootPath = Show-FolderDialog -Description "Root-Ordner auswählen" -TopMost
+
   if (-not $RootPath) {
     Write-Err "E010" "Kein Root-Ordner ausgewählt"
     return
@@ -382,7 +382,7 @@ if ($path -eq "/" -and $req.HttpMethod -eq "GET") {
       }
 
 if ($path -eq "/changeroot" -and $req.HttpMethod -eq "POST") {
-        $newRoot = Show-FolderDialog -Description "Neuen Root-Ordner auswählen" -ShowNewFolderButton $false -TopMost $true
+        $newRoot = Show-FolderDialog -Description "Neuen Root-Ordner auswählen" -TopMost
         
         # Alle offenen File-Handles schließen (wichtig für Verschieben/Löschen)
 [System.GC]::Collect()
@@ -939,7 +939,7 @@ if ($path -eq "/hlschunk" -and $req.HttpMethod -eq "GET") {
         }
 
         # Zielordner per Dialog wählen
-        $destDir = Show-FolderDialog -Description "Zielordner für Verschieben auswählen" -ShowNewFolderButton $true -TopMost $true
+          $destDir = Show-FolderDialog -Description "Zielordner für Verschieben auswählen" -ShowNewFolderButton -TopMost
 
         if (-not $destDir) {
           $json = @{ cancelled = $true; msg = "Abgebrochen" } | ConvertTo-Json -Compress
