@@ -55,18 +55,14 @@ function Get-RelativePathSafe {
     .SYNOPSIS
         Berechnet relativen Pfad mit Fehlerbehandlung
     
-    .DESCRIPTION
-        Berechnet den relativen Pfad von Base zu Target.
-        Bei Fehler (z.B. unterschiedliche Laufwerke) wird der vollständige Target-Pfad zurückgegeben.
-    
     .PARAMETER Base
         Basis-Pfad (z.B. "C:\Photos")
     
-    .PARAMETER Target
-        Ziel-Pfad (z.B. "C:\Photos\Vacation\2024")
+    .PARAMETER Full
+        Vollständiger Ziel-Pfad (z.B. "C:\Photos\Vacation\2024")
     
     .EXAMPLE
-        Get-RelativePathSafe -Base "C:\Photos" -Target "C:\Photos\Vacation"
+        Get-RelativePathSafe -Base "C:\Photos" -Full "C:\Photos\Vacation"
         
         Gibt zurück: "Vacation"
     #>
@@ -77,22 +73,22 @@ function Get-RelativePathSafe {
         [string]$Base,
         
         [Parameter(Mandatory)]
-        [string]$Target
+        [string]$Full
     )
     
     try {
         $Base = $Base.TrimEnd('\')
-        $Target = $Target.TrimEnd('\')
+        $Full = $Full.TrimEnd('\')
         
         if ($PSVersionTable.PSVersion.Major -ge 6) {
-            $relativePath = [System.IO.Path]::GetRelativePath($Base, $Target)
+            $relativePath = [System.IO.Path]::GetRelativePath($Base, $Full)
         }
         else {
-            if ($Target.StartsWith($Base, [StringComparison]::OrdinalIgnoreCase)) {
-                $relativePath = $Target.Substring($Base.Length).TrimStart('\')
+            if ($Full.StartsWith($Base, [StringComparison]::OrdinalIgnoreCase)) {
+                $relativePath = $Full.Substring($Base.Length).TrimStart('\')
             }
             else {
-                $relativePath = $Target
+                $relativePath = $Full
             }
         }
         
@@ -100,12 +96,12 @@ function Get-RelativePathSafe {
             $relativePath = '.'
         }
         
-        Write-Verbose "Relativer Pfad: '$Base' -> '$Target' = '$relativePath'"
+        Write-Verbose "Relativer Pfad: '$Base' -> '$Full' = '$relativePath'"
         return $relativePath
     }
     catch {
         Write-Verbose "Fehler bei Pfad-Berechnung, verwende vollständigen Pfad: $_"
-        return $Target
+        return $Full
     }
 }
 
